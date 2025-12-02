@@ -4,7 +4,23 @@ import { DEFAULT_OPENAI_MODEL, getOpenAIClient } from "@/lib/openai";
 import type { PlanAssignment, WorkerPreference } from "@/types";
 
 type SanitizedPreference = WorkerPreference & {
-  days: number;
+  targetDays: number;
+  priority: boolean;
+};
+
+type WorkerState = {
+  id: string;
+  targetDays: number;
+  assigned: number;
+  assignedDay: number;
+  assignedNight: number;
+  priority: boolean;
+  allowDay: boolean;
+  allowNight: boolean;
+  ratio: number;
+  lastDay?: number;
+  lastType?: "day" | "night";
+  streak: number;
 };
 
 type OpenAIPlanItem = {
@@ -14,25 +30,51 @@ type OpenAIPlanItem = {
   note?: string | null;
 };
 
+const MAX_CONSECUTIVE_DAYS = 4;
+const MAX_CONSECUTIVE_NIGHTS = 3;
+
 function toDateKey(year: number, month: number, day: number) {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-function extractPlanAssignments(
-  rawPlan: OpenAIPlanItem[],
-  year: number,
-  month: number,
-  daysInMonth: number
-): PlanAssignment[] {
+function isWeekend(year: number, monthZeroBased: number, day: number) {
+  const weekday = new Date(year, monthZeroBased, day).getDay(); // 0=Sun
+  return weekday === 0 || weekday === 6;
+}
+
+function clamp(value: number, min: number, max: number) {
+  if (Number.isNaN(value)) return min;
+  return Math.max(min, Math.min(max, value));
+}
+
+function sanitizePreferences(preferences: WorkerPreference[], daysInMonth: number): SanitizedPreference[] {
+  return preferences.map((pref) => ({
+    ...pref,
+    priority: Boolean(pref.priority),
+    targetDays: clamp(pref.days, 0, daysInMonth),
+    allowDay: pref.allowDay !== false,
+    allowNight: pref.allowNight !== false,
+    ratio: clamp(pref.ratio ?? 50, 0, 100),
+  }));
+}
+
+function normalizeTargets(preferences: SanitizedPreference[], totalSlots: number): SanitizedPreference[] {
+  const totalRequested = preferences.reduce((sum, pref) => sum + pref.targetDays, 0);
+  if (totalRequested <= totalSlots || totalRequested === 0) return preferences;
+  const factor = totalSlots / totalRequested;
+  return preferences.map((pref) => {
+    const scaled = Math.max(pref.priority ? 1 : 0, Math.floor(pref.targetDays * factor));
+    return { ...pref, targetDays: clamp(scaled, 0, pref.targetDays) };
+  });
+}
+
+function extractPlanAssignments(rawPlan: OpenAIPlanItem[], year: number, month: number, daysInMonth: number): PlanAssignment[] {
   const byDate = new Map<string, OpenAIPlanItem>();
   rawPlan.forEach((item) => {
-    if (item.date) {
-      byDate.set(item.date, item);
-    }
+    if (item.date) byDate.set(item.date, item);
   });
 
   const assignments: PlanAssignment[] = [];
-
   for (let day = 1; day <= daysInMonth; day++) {
     const dateKey = toDateKey(year, month, day);
     const item = byDate.get(dateKey);
@@ -46,226 +88,244 @@ function extractPlanAssignments(
             note?: string | null;
           })
         : undefined;
-    const dayWorker =
-      item?.dayWorkerId ??
-      legacy?.day_worker_id ??
-      legacy?.day ??
-      null;
-    const nightWorker =
-      item?.nightWorkerId ??
-      legacy?.night_worker_id ??
-      legacy?.night ??
-      null;
+    const dayWorker = item?.dayWorkerId ?? legacy?.day_worker_id ?? legacy?.day ?? null;
+    const nightWorker = item?.nightWorkerId ?? legacy?.night_worker_id ?? legacy?.night ?? null;
     const note = item?.note ?? legacy?.note ?? null;
-
-    assignments.push({
-      date: dateKey,
-      shiftType: "day",
-      workerId: dayWorker ?? null,
-      note,
-    });
-    assignments.push({
-      date: dateKey,
-      shiftType: "night",
-      workerId: nightWorker ?? null,
-      note,
-    });
+    assignments.push({ date: dateKey, shiftType: "day", workerId: dayWorker ?? null, note });
+    assignments.push({ date: dateKey, shiftType: "night", workerId: nightWorker ?? null, note });
   }
-
   return assignments;
 }
 
-function clampDays(days: number, maxDays: number) {
-  if (Number.isNaN(days) || days < 1) return 1;
-  return Math.min(days, maxDays);
+function isRestOk(state: WorkerState, day: number, shift: "day" | "night") {
+  if (!state.lastDay) return true;
+  if (state.lastDay === day && state.lastType && state.lastType !== shift) return false; // no 24h
+  if (state.lastType === "night" && state.lastDay === day - 1 && shift === "day") return false; // rest after night
+  return true;
 }
 
-function sanitizePreferences(
-  preferences: WorkerPreference[],
-  daysInMonth: number
-): SanitizedPreference[] {
-  return preferences.map((pref) => ({
-    ...pref,
-    days: clampDays(pref.days, daysInMonth),
-    allowDay: pref.allowDay !== false,
-    allowNight: pref.allowNight !== false,
-  }));
+function wouldExceedConsecutive(state: WorkerState, day: number, shift: "day" | "night") {
+  if (!state.lastDay || state.lastDay !== day - 1 || state.lastType !== shift) return false;
+  const limit = shift === "night" ? MAX_CONSECUTIVE_NIGHTS : MAX_CONSECUTIVE_DAYS;
+  return state.streak + 1 > limit;
 }
 
-function buildFallbackAssignments(
-  baseAssignments: PlanAssignment[],
-  preferences: SanitizedPreference[],
-  workers: Array<{
-    id: string;
-    preferred_shifts: string[];
-  }>,
-  year: number,
-  month: number,
-  daysInMonth: number
-): PlanAssignment[] {
-  const prefById = new Map(preferences.map((pref) => [pref.workerId, pref]));
-  const desiredById = new Map(preferences.map((pref) => [pref.workerId, pref.days]));
-  const dayPool = preferences.filter((pref) => pref.allowDay).map((pref) => pref.workerId);
-  const nightPool = preferences.filter((pref) => pref.allowNight).map((pref) => pref.workerId);
-
-  const map = new Map<string, { day?: string | null; night?: string | null }>();
-  baseAssignments.forEach((assignment) => {
-    const entry = map.get(assignment.date) ?? {};
-    entry[assignment.shiftType] = assignment.workerId ?? null;
-    map.set(assignment.date, entry);
-  });
-
-  const usage = new Map<string, number>();
-  const lastShift = new Map<string, { day: number; type: "day" | "night" }>();
-
-  const incrementUsage = (id: string | null | undefined) => {
-    if (!id) return;
-    usage.set(id, (usage.get(id) ?? 0) + 1);
+function applyAssignment(state: WorkerState, day: number, shift: "day" | "night") {
+  const consecutive = state.lastDay === day - 1 && state.lastType === shift ? state.streak + 1 : 1;
+  const next: WorkerState = {
+    ...state,
+    assigned: state.assigned + 1,
+    assignedDay: state.assignedDay + (shift === "day" ? 1 : 0),
+    assignedNight: state.assignedNight + (shift === "night" ? 1 : 0),
+    lastDay: day,
+    lastType: shift,
+    streak: consecutive,
   };
+  return next;
+}
 
-  baseAssignments.forEach((assignment) => {
-    incrementUsage(assignment.workerId);
-  });
+function isValidCandidate(
+  worker: WorkerState,
+  day: number,
+  shift: "day" | "night",
+  existingDay: string | null | undefined,
+  maxPerWorker: number
+) {
+  if (worker.assigned >= maxPerWorker) return false;
+  if (existingDay && existingDay === worker.id) return false;
+  if (shift === "day" && !worker.allowDay) return false;
+  if (shift === "night" && !worker.allowNight) return false;
+  if (!isRestOk(worker, day, shift)) return false;
+  if (wouldExceedConsecutive(worker, day, shift)) return false;
+  return true;
+}
 
-  const canTakeShift = (
-    workerId: string,
-    date: number,
-    shift: "day" | "night",
-    otherShiftWorker: string | null | undefined
-  ) => {
-    if (workerId === otherShiftWorker) return false;
-    const last = lastShift.get(workerId);
-    if (!last) return true;
-    if (last.day === date && last.type !== shift) return false; // no 24h
-    if (last.type === "night" && shift === "day" && last.day === date - 1) return false; // rest after night
-    return true;
-  };
+function scoreCandidate(
+  worker: WorkerState,
+  day: number,
+  shift: "day" | "night",
+  daysInMonth: number,
+  weekend: boolean
+) {
+  const remaining = worker.targetDays - worker.assigned;
+  const priorityBoost = worker.priority ? 3 : 1;
+  const balancePref = shift === "day" ? worker.ratio : 100 - worker.ratio; // 0..100
+  const balanceScore = balancePref / 50; // ~0..2
+  const distributionScore = 1 - Math.abs(day - daysInMonth / 2) / (daysInMonth / 2); // center-spread
+  const weekendPenalty = weekend ? 0.9 : 1;
+  return remaining * priorityBoost * balanceScore * weekendPenalty + distributionScore;
+}
 
-  const pickWorker = (
-    pool: string[],
-    date: number,
-    otherShiftWorker: string | null | undefined,
-    shift: "day" | "night",
-    allowRelaxed: boolean
-  ) => {
-    const sorted = [...pool].sort((a, b) => {
-      const aPref = prefById.get(a);
-      const bPref = prefById.get(b);
-      const aDesired = desiredById.get(a) ?? 0;
-      const bDesired = desiredById.get(b) ?? 0;
-      const aUsage = usage.get(a) ?? 0;
-      const bUsage = usage.get(b) ?? 0;
-      const aPriority = aPref?.priority ? 1 : 0;
-      const bPriority = bPref?.priority ? 1 : 0;
-      const aDeficit = aDesired - aUsage;
-      const bDeficit = bDesired - bUsage;
-      if (aPriority !== bPriority) return bPriority - aPriority;
-      if (aDeficit !== bDeficit) return bDeficit - aDeficit;
-      return aUsage - bUsage;
-    });
-
-    for (const workerId of sorted) {
-      if (allowRelaxed || canTakeShift(workerId, date, shift, otherShiftWorker)) {
-        return workerId;
-      }
-    }
-    return sorted[0] ?? null;
-  };
-
+function buildEmptySchedule(daysInMonth: number) {
+  const schedule = new Map<number, { day?: string | null; night?: string | null }>();
   for (let day = 1; day <= daysInMonth; day++) {
-    const dateKey = toDateKey(year, month, day);
-    const entry = map.get(dateKey) ?? {};
-    const otherDay = entry.night ?? null;
-    if (!entry.day) {
-      const workerId = pickWorker(dayPool.length ? dayPool : nightPool, day, otherDay, "day", false);
-      entry.day = workerId ?? null;
-      incrementUsage(workerId);
-      if (workerId) lastShift.set(workerId, { day, type: "day" });
-    } else {
-      incrementUsage(entry.day);
-      if (entry.day) lastShift.set(entry.day, { day, type: "day" });
-    }
+    schedule.set(day, { day: null, night: null });
+  }
+  return schedule;
+}
 
-    const otherNight = entry.day ?? null;
-    if (!entry.night) {
-      const workerId = pickWorker(
-        nightPool.length ? nightPool : dayPool,
-        day,
-        otherNight,
-        "night",
-        false
-      );
-      entry.night = workerId ?? null;
-      incrementUsage(workerId);
-      if (workerId) lastShift.set(workerId, { day, type: "night" });
-    } else {
-      incrementUsage(entry.night);
-      if (entry.night) lastShift.set(entry.night, { day, type: "night" });
-    }
+function mapAssignmentsToSchedule(assignments: PlanAssignment[]) {
+  const schedule = new Map<number, { day?: string | null; night?: string | null }>();
+  assignments.forEach((assignment) => {
+    const day = Number(assignment.date.split("-")[2]);
+    const entry = schedule.get(day) ?? {};
+    entry[assignment.shiftType] = assignment.workerId ?? null;
+    schedule.set(day, entry);
+  });
+  return schedule;
+}
 
-    map.set(dateKey, entry);
+function isAssignmentValid(
+  worker: WorkerState,
+  day: number,
+  shift: "day" | "night",
+  entry: { day?: string | null; night?: string | null },
+  maxPerWorker: number
+) {
+  if (shift === "day" && entry.day && entry.day !== worker.id) return false;
+  if (shift === "night" && entry.night && entry.night !== worker.id) return false;
+  return isValidCandidate(worker, day, shift, entry.day, maxPerWorker);
+}
+
+function buildSchedule(
+  preferences: SanitizedPreference[],
+  baseAssignments: PlanAssignment[],
+  year: number,
+  monthZeroBased: number,
+  daysInMonth: number
+) {
+  const totalSlots = daysInMonth * 2;
+  const normalizedPrefs = normalizeTargets(preferences, totalSlots);
+  const schedule = baseAssignments.length > 0 ? mapAssignmentsToSchedule(baseAssignments) : buildEmptySchedule(daysInMonth);
+
+  const stateById = new Map<string, WorkerState>();
+  normalizedPrefs.forEach((pref) => {
+    stateById.set(pref.workerId, {
+      id: pref.workerId,
+      targetDays: pref.targetDays,
+      assigned: 0,
+      assignedDay: 0,
+      assignedNight: 0,
+      priority: pref.priority,
+      allowDay: pref.allowDay !== false,
+      allowNight: pref.allowNight !== false,
+      ratio: pref.ratio ?? 50,
+      streak: 0,
+    });
+  });
+
+  // Validate AI assignments and drop invalid ones.
+  for (let day = 1; day <= daysInMonth; day++) {
+    const entry = schedule.get(day) ?? { day: null, night: null };
+    (["day", "night"] as const).forEach((shift) => {
+      const workerId = entry[shift];
+      if (!workerId) return;
+      const worker = stateById.get(workerId);
+      if (!worker) {
+        entry[shift] = null;
+        return;
+      }
+      const valid = isAssignmentValid(worker, day, shift, entry, worker.targetDays);
+      if (!valid) {
+        entry[shift] = null;
+      } else {
+        const nextState = applyAssignment(worker, day, shift);
+        stateById.set(workerId, nextState);
+      }
+    });
+    schedule.set(day, entry);
   }
 
-  const missingWorkers = preferences
-    .map((pref) => pref.workerId)
-    .filter((id) => (usage.get(id) ?? 0) === 0);
+  // Fill remaining slots day-by-day.
+  for (let day = 1; day <= daysInMonth; day++) {
+    const weekend = isWeekend(year, monthZeroBased, day);
+    const entry = schedule.get(day) ?? { day: null, night: null };
 
-  if (missingWorkers.length > 0) {
-    const dates = Array.from({ length: daysInMonth }, (_, index) => index + 1);
-    for (const missing of missingWorkers) {
-      const pref = prefById.get(missing);
-      if (!pref) continue;
-      const canDay = pref.allowDay;
-      const canNight = pref.allowNight;
+    (["day", "night"] as const).forEach((shift) => {
+      if (shift === "day" && entry.day) return;
+      if (shift === "night" && entry.night) return;
+
+      const candidates = normalizedPrefs
+        .map((pref) => stateById.get(pref.workerId)!)
+        .filter((worker) => isValidCandidate(worker, day, shift, entry.day, worker.targetDays));
+
+      if (candidates.length === 0) return;
+
+      const best = candidates
+        .map((worker) => ({
+          worker,
+          score: scoreCandidate(worker, day, shift, daysInMonth, weekend),
+        }))
+        .sort((a, b) => b.score - a.score)[0];
+
+      if (!best) return;
+
+      const nextState = applyAssignment(best.worker, day, shift);
+      stateById.set(best.worker.id, nextState);
+      if (shift === "day") entry.day = best.worker.id;
+      else entry.night = best.worker.id;
+    });
+
+    schedule.set(day, entry);
+  }
+
+  // Guarantee everyone gets at least one shift if possible via swaps.
+  const unassigned = normalizedPrefs.filter((pref) => (stateById.get(pref.workerId)?.assigned ?? 0) === 0);
+  for (const pref of unassigned) {
+    for (let day = 1; day <= daysInMonth; day++) {
+      const entry = schedule.get(day)!;
+      const shifts: ("day" | "night")[] = ["day", "night"];
       let placed = false;
-      for (const day of dates) {
-        if (placed) break;
-        const dateKey = toDateKey(year, month, day);
-        const entry = map.get(dateKey);
-        if (!entry) continue;
-        if (canDay && entry.day && entry.day !== missing) {
-          entry.day = missing;
+      for (const shift of shifts) {
+        const currentId = entry[shift];
+        if (!currentId) continue;
+        const currentState = stateById.get(currentId)!;
+        const candidateState = stateById.get(pref.workerId)!;
+        // Try swap if candidate can take it and current can be removed.
+        if (
+          isValidCandidate(candidateState, day, shift, shift === "day" ? entry.night : entry.day, candidateState.targetDays) &&
+          currentState.assigned > 1
+        ) {
+          entry[shift] = pref.workerId;
+          stateById.set(pref.workerId, applyAssignment(candidateState, day, shift));
+          stateById.set(currentId, { ...currentState, assigned: currentState.assigned - 1 });
           placed = true;
-          incrementUsage(missing);
-          map.set(dateKey, entry);
-          break;
-        }
-        if (canNight && entry.night && entry.night !== missing) {
-          entry.night = missing;
-          placed = true;
-          incrementUsage(missing);
-          map.set(dateKey, entry);
           break;
         }
       }
+      if (placed) break;
     }
   }
 
   const result: PlanAssignment[] = [];
-  map.forEach((entry, dateKey) => {
-    const dayWorker = entry.day ?? null;
-    const nightWorker = entry.night ?? null;
-    // If still null (AI returned blank and pools were empty), relax constraints to fill with any available.
-    const safeDay =
-      dayWorker ??
-      pickWorker(dayPool.length ? dayPool : nightPool, Number(dateKey.slice(-2)), null, "day", true) ??
-      null;
-    const safeNight =
-      nightWorker ??
-      pickWorker(
-        nightPool.length ? nightPool : dayPool,
-        Number(dateKey.slice(-2)),
-        safeDay,
-        "night",
-        true
-      ) ??
-      null;
-
-    result.push({ date: dateKey, shiftType: "day", workerId: safeDay });
-    result.push({ date: dateKey, shiftType: "night", workerId: safeNight });
+  schedule.forEach((entry, day) => {
+    const dateKey = toDateKey(year, monthZeroBased + 1, day);
+    result.push({ date: dateKey, shiftType: "day", workerId: entry.day ?? null });
+    result.push({ date: dateKey, shiftType: "night", workerId: entry.night ?? null });
   });
 
-  return result.sort((a, b) => a.date.localeCompare(b.date));
+  result.sort((a, b) => a.date.localeCompare(b.date));
+  return { assignments: result, stateById };
+}
+
+function formatMeta(
+  preferences: SanitizedPreference[],
+  stateById: Map<string, WorkerState>,
+  daysInMonth: number,
+  notes: string[]
+) {
+  const perWorker = preferences.map((pref) => {
+    const state = stateById.get(pref.workerId);
+    const assigned = state?.assigned ?? 0;
+    const shortfall = pref.targetDays - assigned;
+    if (shortfall > 0 && pref.priority) {
+      notes.push(
+        `${pref.workerId} (prioritet) tražio ${pref.targetDays}, dodijeljeno ${assigned} zbog ograničenja.`
+      );
+    }
+    return `${pref.workerId}: ${assigned}/${pref.targetDays}`;
+  });
+  return `Plan za ${daysInMonth} dana. Pokrivenost: ${perWorker.join("; ")}. ${notes.join(" ")}`.trim();
 }
 
 export async function POST(request: Request) {
@@ -321,14 +381,19 @@ export async function POST(request: Request) {
 
     const daysInMonth = new Date(year, month, 0).getDate();
     const sanitizedPreferences = sanitizePreferences(workerPreferencesRaw, daysInMonth);
-    const openai = getOpenAIClient();
+    const monthZeroBased = month - 1;
+    const totalSlots = daysInMonth * 2;
 
+    const openai = getOpenAIClient();
     const systemPrompt = `
-Ti si planer smjena za njegu. Moraš poštovati:
+Ti si planer smjena za njegu. Prvo ispoštuj prioritetne radnike (priority=true): daju im se njihove tražene smjene (npr. 17 dana sa 100% noćne) koliko god je to realno moguće, uz poštovanje pravila odmora.
+Istovremeno svaki odabrani radnik mora dobiti barem nekoliko smjena; preostale smjene ravnopravno podijeli tako da niko ne ostane na 0 i da raspored izgleda fer.
+Moraš poštovati:
 - Nema 24h u komadu: isti radnik ne može dan pa noć isti dan.
 - Nakon noćne mora imati cijeli dan pauze prije nove dnevne.
-- Poštuj preferencije (day/night), prioritetne radnike guraš češće.
-- Koristi samo workerId iz liste. Ako nema radnika, ostavi null.
+- Poštuj preferencije (day/night) i ratio; prioritetni radnici imaju prednost kod popune.
+- Ne planiraj "u cugu": izbjegavaj serije duže od 4-5 dana istog radnika; miješaj radnike kroz mjesec, uključujući vikende.
+- Koristi samo workerId iz liste. Ako baš nema radnika, ostavi null, ali pokušaj popuniti sve smjene.
 Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id|null>", "nightWorkerId": "<id|null>", "note": "..." }].
 `;
 
@@ -357,51 +422,49 @@ Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id
       preferences: sanitizedPreferences,
     };
 
-    const completion = await openai.chat.completions.create({
-      model: DEFAULT_OPENAI_MODEL,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt.trim() },
-        {
-          role: "user",
-          content: `Generiši optimalnu rotaciju. Ulazni podaci: ${JSON.stringify(userPayload)}`,
-        },
-      ],
-      temperature: 0.2,
-    });
-
-    const content = completion.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error("OpenAI nije vratio sadržaj.");
-    }
-
-    let parsed: unknown;
+    let aiAssignments: PlanAssignment[] = [];
     try {
-      parsed = JSON.parse(content);
+      const completion = await openai.chat.completions.create({
+        model: DEFAULT_OPENAI_MODEL,
+        response_format: { type: "json_object" },
+        messages: [
+          { role: "system", content: systemPrompt.trim() },
+          {
+            role: "user",
+            content: `Generiši optimalnu rotaciju. Ulazni podaci: ${JSON.stringify(userPayload)}`,
+          },
+        ],
+        temperature: 0.2,
+      });
+
+      const content = completion.choices[0]?.message?.content;
+      if (content) {
+        const parsed = JSON.parse(content) as Record<string, unknown>;
+        const rawPlanSource = parsed.plan ?? parsed.assignments ?? parsed.days ?? [];
+        const rawPlan: OpenAIPlanItem[] = Array.isArray(rawPlanSource)
+          ? (rawPlanSource as OpenAIPlanItem[])
+          : [];
+        aiAssignments = extractPlanAssignments(rawPlan, year, month, daysInMonth);
+      }
     } catch (error) {
-      console.error("Parse OpenAI JSON", error, content);
-      throw new Error("OpenAI je vratio nevalidan JSON.");
+      console.error("OpenAI plan failed, fallback only", error);
+      aiAssignments = [];
     }
 
-    if (!parsed || typeof parsed !== "object") {
-      throw new Error("OpenAI je vratio nevalidan JSON.");
+    const notes: string[] = [];
+    if (sanitizedPreferences.reduce((sum, pref) => sum + pref.targetDays, 0) < totalSlots) {
+      notes.push("Zatraženo manje smjena od ukupnog broja slotova; popunjavam best-effort.");
     }
 
-    const parsedObj = parsed as Record<string, unknown>;
-    const rawPlanSource = parsedObj.plan ?? parsedObj.assignments ?? parsedObj.days ?? [];
-    const rawPlan: OpenAIPlanItem[] = Array.isArray(rawPlanSource)
-      ? (rawPlanSource as OpenAIPlanItem[])
-      : [];
-    const assignments = extractPlanAssignments(rawPlan, year, month, daysInMonth);
-    const finalAssignments = buildFallbackAssignments(
-      assignments,
+    const { assignments: finalAssignments, stateById } = buildSchedule(
       sanitizedPreferences,
-      workerRows,
+      aiAssignments,
       year,
-      month,
+      monthZeroBased,
       daysInMonth
     );
-    const summary = typeof parsedObj.summary === "string" ? parsedObj.summary : null;
+
+    const summary = formatMeta(sanitizedPreferences, stateById, daysInMonth, notes);
 
     return NextResponse.json({ data: { assignments: finalAssignments, summary } });
   } catch (error) {
