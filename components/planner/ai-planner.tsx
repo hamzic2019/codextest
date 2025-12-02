@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import {
   ChevronDown,
   Clock,
+  Download,
   Moon,
   Save,
   Search,
@@ -813,6 +814,13 @@ export function PlannerWizard() {
           <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-[1px] sm:w-auto">
             <Sparkles className="h-4 w-4" />
             {t("planner.generate")}
+          </button>
+          <button
+            type="button"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 sm:w-auto"
+          >
+            <Download className="h-4 w-4" />
+            {t("planner.export")}
           </button>
           <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:-translate-y-[1px] hover:bg-emerald-600 sm:w-auto">
             <Save className="h-4 w-4" />

@@ -224,7 +224,7 @@ export default function PlanOverviewPage() {
                 </h3>
               </div>
               <span className="text-sm font-semibold text-slate-500">
-                {t("planner.preview.meta", { days: rows.length, workers: workers.length })}
+                {t("planner.preview.meta", { days: rows.length })}
               </span>
             </div>
 
