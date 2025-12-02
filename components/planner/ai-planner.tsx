@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import {
   ChevronDown,
   Clock,
-  Download,
+  FileDown,
   Moon,
   Save,
   Search,
@@ -15,22 +15,20 @@ import {
   UserRoundSearch,
   X,
 } from "lucide-react";
-import { patients, workers } from "@/lib/mock-data";
 import { Badge } from "../ui/badge";
 import { Card } from "../ui/card";
-import type { Worker, ShiftType } from "@/types";
+import type {
+  Patient,
+  PlanAssignment,
+  ShiftType,
+  Worker,
+  WorkerPreference,
+} from "@/types";
 import { PatientSelector } from "./patient-selector";
 import { useTranslations } from "../i18n/language-provider";
 import type { Language } from "../i18n/language-provider";
-
-type WorkerPreference = {
-  workerId: string;
-  allowDay: boolean;
-  allowNight: boolean;
-  ratio: number; // 0 = samo noćne, 100 = samo dnevne
-  days: number;
-  priority: boolean;
-};
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 
 type PreviewRow = {
   dateKey: string;
@@ -205,7 +203,8 @@ function WorkerSearchSelect({
         </Badge>
       </button>
 
-      {open && menuStyle &&
+      {open &&
+        menuStyle &&
         createPortal(
           <div
             className="scroll-custom max-h-[300px] overflow-y-auto rounded-xl border border-slate-200 bg-white/98 p-3 shadow-[0_30px_80px_rgba(15,23,42,0.18)]"
@@ -397,8 +396,106 @@ function ShiftToggle({
   );
 }
 
+function preferenceFromWorker(worker: Worker, priority = false): WorkerPreference {
+  const allowDay = worker.preferredShifts.includes("day");
+  const allowNight = worker.preferredShifts.includes("night");
+  const ratio =
+    worker.preferredShifts.length === 1
+      ? worker.preferredShifts[0] === "day"
+        ? 70
+        : 30
+      : 50;
+
+  return {
+    workerId: worker.id,
+    allowDay,
+    allowNight,
+    ratio,
+    days: 7,
+    priority,
+  };
+}
+
+function toDateKey(year: number, monthZeroBased: number, day: number) {
+  return `${year}-${String(monthZeroBased + 1).padStart(2, "0")}-${String(day).padStart(
+    2,
+    "0"
+  )}`;
+}
+
+function assignmentsListToMap(
+  list: PlanAssignment[]
+): Record<string, Record<ShiftType, string | null>> {
+  const next: Record<string, Record<ShiftType, string | null>> = {};
+  list.forEach((item) => {
+    if (!next[item.date]) next[item.date] = { day: null, night: null };
+    next[item.date][item.shiftType] = item.workerId ?? null;
+  });
+  return next;
+}
+
+function mapAssignmentsToArray(
+  map: Record<string, Record<ShiftType, string | null>>,
+  year: number,
+  monthZeroBased: number,
+  daysInMonth: number
+): PlanAssignment[] {
+  const rows: PlanAssignment[] = [];
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateKey = toDateKey(year, monthZeroBased, day);
+    const entry = map[dateKey];
+    rows.push({
+      date: dateKey,
+      shiftType: "day",
+      workerId: entry?.day ?? null,
+    });
+    rows.push({
+      date: dateKey,
+      shiftType: "night",
+      workerId: entry?.night ?? null,
+    });
+  }
+  return rows;
+}
+
+function clampRequestedDays(days: number, daysInMonth: number) {
+  if (Number.isNaN(days) || days < 1) return 1;
+  // Max 2 shifts per day; keep cap to daysInMonth to avoid silly values.
+  return Math.min(days, daysInMonth);
+}
+
 export function PlannerWizard() {
   const { t, language } = useTranslations();
+  const [patients, setPatients] = useState<Patient[]>([]);
+  const [workers, setWorkers] = useState<Worker[]>([]);
+  const [selectedPatient, setSelectedPatient] = useState("");
+  const [selectedWorkers, setSelectedWorkers] = useState<WorkerPreference[]>([]);
+  const [planMonth, setPlanMonth] = useState(() => new Date().getMonth());
+  const [planYear, setPlanYear] = useState(() => new Date().getFullYear());
+  const plannerMonthNames = useMemo(
+    () => MONTH_LABELS[language] ?? MONTH_LABELS.bs,
+    [language]
+  );
+  const availablePlanYears = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    return Array.from({ length: 4 }, (_, index) => currentYear + index);
+  }, []);
+  const selectedPlanLabel = useMemo(
+    () => formatMonthLabel(language, new Date(planYear, planMonth, 1)),
+    [language, planMonth, planYear]
+  );
+  const [promptText, setPromptText] = useState("");
+  const [assignments, setAssignments] = useState<
+    Record<string, Record<ShiftType, string | null>>
+  >({});
+  const [generatedSummary, setGeneratedSummary] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
+  const [statusMessage, setStatusMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [isLoadingData, setIsLoadingData] = useState(true);
+  const [sanitizationNotice, setSanitizationNotice] = useState<string | null>(null);
+
   const statusLabels = useMemo(
     () => ({
       radnik: t("planner.worker.status.radnik"),
@@ -414,61 +511,122 @@ export function PlannerWizard() {
     }),
     [t]
   );
-  const [planMonth, setPlanMonth] = useState(() => new Date().getMonth());
-  const [planYear, setPlanYear] = useState(() => new Date().getFullYear());
-  const plannerMonthNames = useMemo(
-    () => MONTH_LABELS[language] ?? MONTH_LABELS.bs,
-    [language]
-  );
-  const availablePlanYears = useMemo(() => {
-    const currentYear = new Date().getFullYear();
-    return Array.from({ length: 4 }, (_, index) => currentYear + index);
-  }, []);
-  const selectedPlanLabel = useMemo(
-    () => formatMonthLabel(language, new Date(planYear, planMonth, 1)),
-    [language, planMonth, planYear]
-  );
-  const [selectedPatient, setSelectedPatient] = useState(patients[0].id);
-  const [selectedWorkers, setSelectedWorkers] = useState<WorkerPreference[]>(() =>
-    workers.slice(0, 3).map((worker, index) => ({
-      workerId: worker.id,
-      allowDay: worker.preferredShifts.includes("day"),
-      allowNight: worker.preferredShifts.includes("night"),
-      ratio:
-        worker.preferredShifts.length === 1
-          ? worker.preferredShifts[0] === "day"
-            ? 75
-            : 25
-          : 50,
-      days: 6 + index * 2,
-      priority: index === 0,
-    }))
-  );
 
   const selectedIds = useMemo(
     () => selectedWorkers.map((item) => item.workerId),
     [selectedWorkers]
   );
 
+  const workerById = useMemo(() => new Map(workers.map((worker) => [worker.id, worker])), [
+    workers,
+  ]);
+  const daysInMonth = useMemo(
+    () => new Date(planYear, planMonth + 1, 0).getDate(),
+    [planMonth, planYear]
+  );
+
+  const hasAnyAssignment = useMemo(
+    () =>
+      Object.values(assignments).some((entry) => {
+        if (!entry) return false;
+        return Boolean(entry.day) || Boolean(entry.night);
+      }),
+    [assignments]
+  );
+
+  const totalAssigned = useMemo(() => {
+    let total = 0;
+    Object.values(assignments).forEach((entry) => {
+      if (entry?.day) total += 1;
+      if (entry?.night) total += 1;
+    });
+    return total;
+  }, [assignments]);
+
+  useEffect(() => {
+    const loadData = async () => {
+      setIsLoadingData(true);
+      setErrorMessage(null);
+      try {
+        const [patientsRes, workersRes] = await Promise.all([
+          fetch("/api/patients"),
+          fetch("/api/workers"),
+        ]);
+
+        if (!patientsRes.ok || !workersRes.ok) {
+          throw new Error("Network error");
+        }
+
+        const patientsJson = await patientsRes.json();
+        const workersJson = await workersRes.json();
+
+        setPatients(patientsJson.data ?? []);
+        setWorkers(workersJson.data ?? []);
+
+        if (!selectedPatient && patientsJson.data?.length) {
+          setSelectedPatient(patientsJson.data[0].id);
+        }
+
+        if (selectedWorkers.length === 0 && workersJson.data?.length) {
+          const defaults = (workersJson.data as Worker[])
+            .slice(0, 3)
+            .map((worker, index) => preferenceFromWorker(worker, index === 0));
+          setSelectedWorkers(defaults);
+        }
+      } catch (error) {
+        console.error(error);
+        setErrorMessage(t("planner.loadError"));
+      } finally {
+        setIsLoadingData(false);
+      }
+    };
+
+    loadData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!selectedPatient && patients.length > 0) {
+      setSelectedPatient(patients[0].id);
+    }
+  }, [patients, selectedPatient]);
+
+  useEffect(() => {
+    if (workers.length > 0 && selectedWorkers.length === 0) {
+      const defaults = workers.slice(0, 3).map((worker, index) =>
+        preferenceFromWorker(worker, index === 0)
+      );
+      setSelectedWorkers(defaults);
+    }
+  }, [selectedWorkers.length, workers]);
+
+  const availableWorkersByShift = useMemo(() => {
+    const build = (shift: ShiftType) => {
+      const fromPref = selectedWorkers
+        .filter((pref) => (shift === "day" ? pref.allowDay : pref.allowNight))
+        .map((pref) => workerById.get(pref.workerId))
+        .filter((worker): worker is Worker => Boolean(worker));
+
+      if (fromPref.length > 0) return fromPref;
+
+      return workers.filter((worker) => worker.preferredShifts.includes(shift));
+    };
+
+    return {
+      day: build("day"),
+      night: build("night"),
+    };
+  }, [selectedWorkers, workerById, workers]);
+
   const upsertWorker = (workerId: string) => {
     setSelectedWorkers((prev) => {
       if (prev.some((worker) => worker.workerId === workerId)) return prev;
-      const meta = workers.find((worker) => worker.id === workerId);
+      const meta = workerById.get(workerId);
       return [
         ...prev,
-        {
-          workerId,
-          allowDay: meta?.preferredShifts.includes("day") ?? true,
-          allowNight: meta?.preferredShifts.includes("night") ?? true,
-          ratio:
-            meta?.preferredShifts.length === 1
-              ? meta.preferredShifts[0] === "day"
-                ? 70
-                : 30
-              : 50,
-          days: 7,
-          priority: false,
-        },
+        meta
+          ? preferenceFromWorker(meta)
+          : { workerId, allowDay: true, allowNight: true, ratio: 50, days: 7, priority: false },
       ];
     });
   };
@@ -504,23 +662,6 @@ export function PlannerWizard() {
   };
 
   const previewRows = useMemo<PreviewRow[]>(() => {
-    const enriched = selectedWorkers
-      .map((pref) => {
-        const worker = workers.find((person) => person.id === pref.workerId);
-        if (!worker) return null;
-        return { worker, pref };
-      })
-      .filter(
-        (entry): entry is { worker: Worker; pref: WorkerPreference } => Boolean(entry)
-      );
-
-    const dayCycle = enriched
-      .filter((entry) => entry.pref.allowDay)
-      .map((entry) => entry.worker);
-    const nightCycle = enriched
-      .filter((entry) => entry.pref.allowNight)
-      .map((entry) => entry.worker);
-
     const fallbackWorker: Worker = {
       id: "placeholder",
       name: t("planner.shift.unknown"),
@@ -532,84 +673,202 @@ export function PlannerWizard() {
       city: "-",
     };
     const fallbackPool = workers.length > 0 ? workers : [fallbackWorker];
-    const fallbackNightPool =
-      fallbackPool.length > 1 ? fallbackPool.slice(1, 3) : fallbackPool;
 
-    const safeDayCycle =
-      dayCycle.length > 0
-        ? dayCycle
-        : fallbackPool.slice(0, Math.min(2, fallbackPool.length));
-    const safeNightCycle =
-      nightCycle.length > 0
-        ? nightCycle
-        : fallbackNightPool.length > 0
-          ? fallbackNightPool
-          : safeDayCycle;
-    const finalNightCycle =
-      safeNightCycle.length > 0 ? safeNightCycle : safeDayCycle;
+    const dayCycle = selectedWorkers
+      .filter((pref) => pref.allowDay)
+      .map((pref) => workerById.get(pref.workerId))
+      .filter((worker): worker is Worker => Boolean(worker));
+    const nightCycle = selectedWorkers
+      .filter((pref) => pref.allowNight)
+      .map((pref) => workerById.get(pref.workerId))
+      .filter((worker): worker is Worker => Boolean(worker));
 
-    const previewLength = new Date(planYear, planMonth + 1, 0).getDate();
+    const safeDayCycle = dayCycle.length > 0 ? dayCycle : fallbackPool;
+    const safeNightCycle = nightCycle.length > 0 ? nightCycle : fallbackPool;
 
-    return Array.from({ length: previewLength }, (_, index) => {
+    return Array.from({ length: daysInMonth }, (_, index) => {
       const date = new Date(planYear, planMonth, index + 1);
-      const day = String(index + 1).padStart(2, "0");
-      const dateKey = `${planYear}-${String(planMonth + 1).padStart(2, "0")}-${String(
-        index + 1
-      ).padStart(2, "0")}`;
-      const dayName =
-        safeDayCycle[index % safeDayCycle.length]?.name ?? t("planner.shift.unknown");
-      const nightName =
-        finalNightCycle[index % finalNightCycle.length]?.name ?? t("planner.shift.unknown");
+      const dayLabel = String(index + 1).padStart(2, "0");
+      const dateKey = toDateKey(planYear, planMonth, index + 1);
+      const assignedDayId = assignments[dateKey]?.day;
+      const assignedNightId = assignments[dateKey]?.night;
+
+      const dayWorker = assignedDayId
+        ? workerById.get(assignedDayId) ?? fallbackWorker
+        : safeDayCycle[index % safeDayCycle.length];
+      const nightWorker = assignedNightId
+        ? workerById.get(assignedNightId) ?? fallbackWorker
+        : safeNightCycle[index % safeNightCycle.length];
 
       return {
         dateKey,
-        dayLabel: day,
+        dayLabel,
         monthLabel: formatMonthLabel(language, date),
-        day: dayName,
-        night: nightName,
+        day: dayWorker?.name ?? t("planner.shift.unknown"),
+        night: nightWorker?.name ?? t("planner.shift.unknown"),
       };
     });
-  }, [language, planMonth, planYear, selectedWorkers, t]);
-
-  const availableWorkersByShift = useMemo(() => {
-    const build = (shift: ShiftType) => {
-      const fromPref = selectedWorkers
-        .filter((pref) => (shift === "day" ? pref.allowDay : pref.allowNight))
-        .map((pref) => workers.find((worker) => worker.id === pref.workerId))
-        .filter((worker): worker is Worker => Boolean(worker));
-
-      if (fromPref.length > 0) return fromPref;
-
-      return workers.filter((worker) =>
-        worker.preferredShifts.includes(shift)
-      );
-    };
-
-    return {
-      day: build("day"),
-      night: build("night"),
-    };
-  }, [selectedWorkers]);
-
-  const workerById = useMemo(() => {
-    return new Map(workers.map((worker) => [worker.id, worker]));
-  }, []);
-
-  const [assignments, setAssignments] = useState<
-    Record<string, Record<ShiftType, string | undefined>>
-  >({});
+  }, [assignments, daysInMonth, language, planMonth, planYear, selectedWorkers, t, workerById, workers]);
 
   const assignWorker = (dateKey: string, shift: ShiftType, workerId: string) => {
+    setStatusMessage(null);
     setAssignments((prev) => ({
       ...prev,
       [dateKey]: { ...prev[dateKey], [shift]: workerId },
     }));
   };
 
+  const handleGenerate = async () => {
+    if (!selectedPatient || selectedWorkers.length === 0) {
+      setErrorMessage(t("planner.generateMissing"));
+      return;
+    }
+
+    setIsGenerating(true);
+    setStatusMessage(null);
+    setErrorMessage(null);
+    setSanitizationNotice(null);
+
+    try {
+      const clampedWorkers = selectedWorkers.map((worker) => ({
+        ...worker,
+        days: clampRequestedDays(worker.days, daysInMonth),
+      }));
+      const wasClamped = selectedWorkers.some(
+        (worker) => worker.days !== clampRequestedDays(worker.days, daysInMonth)
+      );
+      if (wasClamped) {
+        setSanitizationNotice(t("planner.daysClamped", { max: daysInMonth }));
+      }
+
+      const response = await fetch("/api/plans/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patientId: selectedPatient,
+          workerPreferences: clampedWorkers,
+          month: planMonth + 1,
+          year: planYear,
+          prompt: promptText,
+        }),
+      });
+
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json.error || "Failed to generate plan");
+      }
+
+      const assignmentList: PlanAssignment[] = json.data?.assignments ?? [];
+      setAssignments(assignmentsListToMap(assignmentList));
+      setGeneratedSummary(json.data?.summary ?? null);
+      setStatusMessage(t("planner.generateSuccess"));
+    } catch (error) {
+      console.error(error);
+      setErrorMessage(t("planner.generateError"));
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
+  const handleSave = async () => {
+    if (!selectedPatient) {
+      setErrorMessage(t("planner.generateMissing"));
+      return;
+    }
+
+    setIsSaving(true);
+    setStatusMessage(null);
+    setErrorMessage(null);
+
+    try {
+      const payloadAssignments = mapAssignmentsToArray(
+        assignments,
+        planYear,
+        planMonth,
+        daysInMonth
+      );
+
+      const response = await fetch("/api/plans", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          patientId: selectedPatient,
+          month: planMonth + 1,
+          year: planYear,
+          prompt: promptText,
+          summary: generatedSummary,
+          assignments: payloadAssignments,
+        }),
+      });
+
+      const json = await response.json();
+      if (!response.ok) {
+        throw new Error(json.error || "Failed to save plan");
+      }
+
+      setStatusMessage(t("planner.saveSuccess"));
+    } catch (error) {
+      console.error(error);
+      setErrorMessage(t("planner.saveError"));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleExport = () => {
+    const patient = patients.find((p) => p.id === selectedPatient);
+    const doc = new jsPDF();
+    doc.setFontSize(12);
+    doc.text(`Pacijent: ${patient?.name ?? "-"}`, 14, 16);
+    doc.text(`Grad: ${patient?.city ?? "-"}`, 14, 24);
+    doc.text(`Pflegegrad: ${patient?.level ?? "-"}`, 14, 32);
+    doc.text(`Mjesec: ${selectedPlanLabel}`, 14, 40);
+    doc.text(`Generisano: ${new Date().toLocaleString()}`, 14, 48);
+    if (generatedSummary) {
+      doc.text("Sažetak:", 14, 58);
+      doc.text(doc.splitTextToSize(generatedSummary, 180), 14, 66);
+    }
+
+    autoTable(doc, {
+      startY: generatedSummary ? 80 : 64,
+      head: [["Datum", "Dnevna", "Noćna"]],
+      body: previewRows.map((row) => [
+        `${row.dayLabel}. ${row.monthLabel}`,
+        row.day,
+        row.night,
+      ]),
+      styles: { fontSize: 9 },
+      headStyles: { fillColor: [15, 23, 42] },
+    });
+
+    doc.save(
+      `plan-${patient?.name ?? "pacijent"}-${planYear}-${String(planMonth + 1).padStart(2, "0")}.pdf`
+    );
+  };
+
+  const disableGenerate =
+    isGenerating || isLoadingData || !selectedPatient || selectedWorkers.length === 0;
+  const disableSave = isSaving || isGenerating || !selectedPatient || !hasAnyAssignment;
+
   return (
     <Card className="space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-xl font-semibold text-slate-900">{t("planner.title")}</h2>
+        {statusMessage ? (
+          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+            {statusMessage}
+          </span>
+        ) : null}
+        {errorMessage ? (
+          <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
+            {errorMessage}
+          </span>
+        ) : null}
+        {sanitizationNotice ? (
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+            {sanitizationNotice}
+          </span>
+        ) : null}
       </div>
 
       <div className="space-y-3">
@@ -617,6 +876,7 @@ export function PlannerWizard() {
           value={selectedPatient}
           onChange={(patientId) => setSelectedPatient(patientId)}
           data={patients}
+          isLoading={isLoadingData}
         />
       </div>
 
@@ -630,9 +890,21 @@ export function PlannerWizard() {
           onSelect={upsertWorker}
         />
 
+        {isLoadingData ? (
+          <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+            {t("planner.loading")}
+          </div>
+        ) : null}
+
+        {workers.length === 0 && !isLoadingData ? (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            {t("planner.noWorkers")}
+          </div>
+        ) : null}
+
         <div className="grid gap-3 lg:grid-cols-2">
           {selectedWorkers.map((item) => {
-            const worker = workers.find((person) => person.id === item.workerId);
+            const worker = workerById.get(item.workerId);
             if (!worker) return null;
             const focusLabel =
               item.ratio === 50
@@ -700,7 +972,9 @@ export function PlannerWizard() {
                     }`}
                   >
                     <Star className="h-4 w-4" />
-                    {item.priority ? t("planner.worker.priority") : t("planner.worker.addPriority")}
+                    {item.priority
+                      ? t("planner.worker.priority")
+                      : t("planner.worker.addPriority")}
                   </button>
                 </div>
 
@@ -761,6 +1035,8 @@ export function PlannerWizard() {
           placeholder={t("planner.promptPlaceholder")}
           className="w-full resize-none rounded-2xl border border-border/70 bg-white px-3 py-3 text-sm text-slate-800 outline-none placeholder:text-slate-400"
           rows={4}
+          value={promptText}
+          onChange={(event) => setPromptText(event.target.value)}
         />
       </div>
 
@@ -811,20 +1087,31 @@ export function PlannerWizard() {
         </div>
 
         <div className="flex flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:pl-2">
-          <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-[1px] sm:w-auto">
-            <Sparkles className="h-4 w-4" />
-            {t("planner.generate")}
-          </button>
           <button
             type="button"
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 sm:w-auto"
+          onClick={handleGenerate}
+          disabled={disableGenerate}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+        >
+          <Sparkles className="h-4 w-4" />
+          {isGenerating ? t("planner.generating") : t("planner.generate")}
+        </button>
+        <button
+          type="button"
+          onClick={handleExport}
+          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 sm:w-auto"
+        >
+          <FileDown className="h-4 w-4" />
+          {t("planner.export")}
+        </button>
+          <button
+            type="button"
+            onClick={handleSave}
+            disabled={disableSave}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:-translate-y-[1px] hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
           >
-            <Download className="h-4 w-4" />
-            {t("planner.export")}
-          </button>
-          <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:-translate-y-[1px] hover:bg-emerald-600 sm:w-auto">
             <Save className="h-4 w-4" />
-            {t("planner.save")}
+            {isSaving ? t("planner.saving") : t("planner.save")}
           </button>
         </div>
       </div>
@@ -849,8 +1136,18 @@ export function PlannerWizard() {
                 workers: selectedWorkers.length,
               })}
             </span>
+            <span className="text-xs text-slate-500">
+              {t("planner.preview.assigned", { count: totalAssigned })}
+            </span>
           </div>
         </div>
+
+        {generatedSummary ? (
+          <div className="rounded-xl border border-sky-100 bg-sky-50/70 px-4 py-3 text-sm text-slate-700">
+            {generatedSummary}
+          </div>
+        ) : null}
+
         <div className="overflow-hidden rounded-2xl border border-slate-100">
           <div className="grid grid-cols-[1.3fr_1fr_1fr] bg-slate-50 px-4 py-3 text-[11px] uppercase tracking-[0.3em] text-slate-500">
             <span>{t("planner.preview.date")}</span>
@@ -891,9 +1188,7 @@ export function PlannerWizard() {
                     selectedWorker={
                       assignedDayId ? workerById.get(assignedDayId) : undefined
                     }
-                    onSelect={(workerId) =>
-                      assignWorker(row.dateKey, "day", workerId)
-                    }
+                    onSelect={(workerId) => assignWorker(row.dateKey, "day", workerId)}
                   />
                   <ShiftDropdownCell
                     shift="night"
@@ -901,9 +1196,7 @@ export function PlannerWizard() {
                     selectedWorker={
                       assignedNightId ? workerById.get(assignedNightId) : undefined
                     }
-                    onSelect={(workerId) =>
-                      assignWorker(row.dateKey, "night", workerId)
-                    }
+                    onSelect={(workerId) => assignWorker(row.dateKey, "night", workerId)}
                   />
                 </div>
               );

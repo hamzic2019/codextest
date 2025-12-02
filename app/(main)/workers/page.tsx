@@ -1,10 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Card } from "@/components/ui/card";
 import { WorkerList } from "@/components/workers/worker-list";
 import { Plus, X } from "lucide-react";
-import { workers as mockWorkers } from "@/lib/mock-data";
 import { useTranslations } from "@/components/i18n/language-provider";
 import type { ShiftType, Worker, WorkerStatus } from "@/types";
 
@@ -33,9 +32,34 @@ const createEmptyForm = (): NewWorkerForm => ({
 
 export default function WorkersPage() {
   const { t } = useTranslations();
-  const [workersState, setWorkersState] = useState<Worker[]>(() => mockWorkers);
+  const [workersState, setWorkersState] = useState<Worker[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form, setForm] = useState<NewWorkerForm>(createEmptyForm);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchWorkers = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/workers");
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const json = await response.json();
+      setWorkersState(json.data ?? []);
+    } catch (err) {
+      console.error(err);
+      setError(t("workers.error"));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchWorkers();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const resetForm = () => setForm(createEmptyForm());
   const openModal = () => {
@@ -62,20 +86,35 @@ export default function WorkersPage() {
 
   const handleSave = () => {
     if (isSaveDisabled) return;
-    const newWorker: Worker = {
-      id: `w-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    setError(null);
+    const payload = {
       name: form.name.trim(),
       role: form.role.trim(),
       city: form.city.trim(),
       status: form.status,
-      preferredShifts:
-        form.preferredShifts.length > 0 ? form.preferredShifts : ["day"],
+      preferredShifts: form.preferredShifts.length > 0 ? form.preferredShifts : ["day"],
       hoursPlanned: Number(form.hoursPlanned) || 0,
       hoursCompleted: Number(form.hoursCompleted) || 0,
     };
 
-    setWorkersState((prev) => [newWorker, ...prev]);
-    closeModal();
+    fetch("/api/workers", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await res.text());
+        }
+        const json = await res.json();
+        const saved: Worker = json.data;
+        setWorkersState((prev) => [saved, ...prev]);
+        closeModal();
+      })
+      .catch((err) => {
+        console.error(err);
+        setError(t("workers.saveError"));
+      });
   };
 
   const statusLabels = {
@@ -108,7 +147,7 @@ export default function WorkersPage() {
         </div>
       </Card>
 
-      <WorkerList workers={workersState} />
+      <WorkerList workers={workersState} isLoading={isLoading} error={error} />
 
       {isModalOpen && (
         <div

@@ -1,10 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { PatientList } from "@/components/patients/patient-list";
 import { Card } from "@/components/ui/card";
 import { Plus, X } from "lucide-react";
-import { patients as mockPatients } from "@/lib/mock-data";
 import { useTranslations } from "@/components/i18n/language-provider";
 import type { Patient } from "@/types";
 
@@ -24,9 +23,34 @@ const createEmptyForm = (): NewPatientForm => ({
 
 export default function PatientsPage() {
   const { t } = useTranslations();
-  const [patientsState, setPatientsState] = useState<Patient[]>(() => mockPatients);
+  const [patientsState, setPatientsState] = useState<Patient[]>([]);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [form, setForm] = useState<NewPatientForm>(createEmptyForm);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchPatients = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const response = await fetch("/api/patients");
+      if (!response.ok) {
+        throw new Error(await response.text());
+      }
+      const json = await response.json();
+      setPatientsState(json.data ?? []);
+    } catch (err) {
+      console.error(err);
+      setError(t("patients.error"));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchPatients();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const resetForm = () => setForm(createEmptyForm());
 
@@ -44,17 +68,33 @@ export default function PatientsPage() {
 
   const handleSave = () => {
     if (isSaveDisabled) return;
-    const newPatient: Patient = {
-      id: `p-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    setError(null);
+
+    const payload = {
       name: form.name.trim(),
       city: form.address.trim(),
       level: form.level.trim() || "Pflegegrad 3",
-      needs: form.notes.trim() ? [form.notes.trim()] : [],
-      lastUpdate: t("patients.modal.lastUpdate"),
-      tags: [],
+      notes: form.notes.trim() || null,
     };
-    setPatientsState((prev) => [newPatient, ...prev]);
-    closeModal();
+
+    fetch("/api/patients", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    })
+      .then(async (res) => {
+        if (!res.ok) {
+          throw new Error(await res.text());
+        }
+        const json = await res.json();
+        const saved: Patient = json.data;
+        setPatientsState((prev) => [saved, ...prev]);
+        closeModal();
+      })
+      .catch((err) => {
+        console.error(err);
+        setError(t("patients.saveError"));
+      });
   };
 
   return (
@@ -81,7 +121,7 @@ export default function PatientsPage() {
         </div>
       </Card>
 
-      <PatientList patients={patientsState} />
+      <PatientList patients={patientsState} isLoading={isLoading} error={error} />
 
       {isModalOpen && (
         <div
