@@ -363,6 +363,16 @@ export function PlannerWizard() {
     }),
     [t]
   );
+  const [planMonth, setPlanMonth] = useState(() => new Date().getMonth());
+  const [planYear, setPlanYear] = useState(() => new Date().getFullYear());
+  const plannerMonthNames = useMemo(
+    () => MONTH_LABELS[language] ?? MONTH_LABELS.bs,
+    [language]
+  );
+  const availablePlanYears = useMemo(() => {
+    const currentYear = new Date().getFullYear();
+    return Array.from({ length: 4 }, (_, index) => currentYear + index);
+  }, []);
   const [selectedPatient, setSelectedPatient] = useState(patients[0].id);
   const [selectedWorkers, setSelectedWorkers] = useState<WorkerPreference[]>(() =>
     workers.slice(0, 3).map((worker, index) => ({
@@ -698,15 +708,50 @@ export function PlannerWizard() {
         />
       </div>
 
-      <div className="flex flex-wrap items-center gap-3">
-        <button className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm hover:-translate-y-[1px]">
-          <Sparkles className="h-4 w-4" />
-          {t("planner.generate")}
-        </button>
-        <button className="ml-auto inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:-translate-y-[1px] hover:bg-emerald-600">
-          <Save className="h-4 w-4" />
-          {t("planner.save")}
-        </button>
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="space-y-1 text-[11px] uppercase tracking-[0.2em] text-slate-500">
+            <span>{t("planner.generate.monthLabel")}</span>
+            <select
+              aria-label={t("planner.generate.monthLabel")}
+              className="appearance-none w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:border-slate-300 focus:border-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-100"
+              value={planMonth}
+              onChange={(event) => setPlanMonth(Number(event.target.value))}
+            >
+              {plannerMonthNames.map((label, index) => (
+                <option key={label} value={index}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="space-y-1 text-[11px] uppercase tracking-[0.2em] text-slate-500">
+            <span>{t("planner.generate.yearLabel")}</span>
+            <select
+              aria-label={t("planner.generate.yearLabel")}
+              className="appearance-none w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:border-slate-300 focus:border-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-100"
+              value={planYear}
+              onChange={(event) => setPlanYear(Number(event.target.value))}
+            >
+              {availablePlanYears.map((year) => (
+                <option key={year} value={year}>
+                  {year}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          <button className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-[1px]">
+            <Sparkles className="h-4 w-4" />
+            {t("planner.generate")}
+          </button>
+          <button className="ml-auto inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:-translate-y-[1px] hover:bg-emerald-600">
+            <Save className="h-4 w-4" />
+            {t("planner.save")}
+          </button>
+        </div>
       </div>
 
       <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_30px_60px_rgba(15,23,42,0.08)]">
