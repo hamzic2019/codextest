@@ -1,17 +1,56 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { CalendarClock, Info, ListChecks, Moon, Sun } from "lucide-react";
+import { CalendarClock, ChevronDown, Moon, Sun } from "lucide-react";
 import { PatientSelector } from "@/components/planner/patient-selector";
 import { Card } from "@/components/ui/card";
-import { patients, planPreviews, shifts, workers } from "@/lib/mock-data";
+import { patients, shifts, workers } from "@/lib/mock-data";
 import { useTranslations } from "@/components/i18n/language-provider";
 import type { Language } from "@/components/i18n/language-provider";
 
 const MONTH_LABELS: Record<Language, string[]> = {
-  bs: ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "avg", "sep", "okt", "nov", "dec"],
-  de: ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
-  en: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+  bs: [
+    "Januar",
+    "Februar",
+    "Mart",
+    "April",
+    "Maj",
+    "Juni",
+    "Juli",
+    "Avgust",
+    "Septembar",
+    "Oktobar",
+    "Novembar",
+    "Decembar",
+  ],
+  de: [
+    "Januar",
+    "Februar",
+    "März",
+    "April",
+    "Mai",
+    "Juni",
+    "Juli",
+    "August",
+    "September",
+    "Oktober",
+    "November",
+    "Dezember",
+  ],
+  en: [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ],
 };
 
 function formatMonthLabel(language: Language, date: Date) {
@@ -20,11 +59,25 @@ function formatMonthLabel(language: Language, date: Date) {
   return `${monthName} ${date.getFullYear()}`;
 }
 
+function formatDateKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(
+    date.getDate()
+  ).padStart(2, "0")}`;
+}
+
 export default function PlanOverviewPage() {
   const { t, language } = useTranslations();
+  const monthNames = MONTH_LABELS[language] ?? MONTH_LABELS.bs;
+  const todayDate = useMemo(() => new Date(), []);
+  const fallbackYear = todayDate.getFullYear();
+  const fallbackMonth = todayDate.getMonth();
+  const todayDisplay = `${todayDate.getDate()}. ${monthNames[todayDate.getMonth()]}`;
   const [selectedPatient, setSelectedPatient] = useState<string>(
     () => patients[0]?.id ?? ""
   );
+
+  const [selectedYear, setSelectedYear] = useState(() => fallbackYear);
+  const [selectedMonth, setSelectedMonth] = useState(() => fallbackMonth);
 
   const workerById = useMemo(
     () => new Map(workers.map((worker) => [worker.id, worker])),
@@ -36,22 +89,29 @@ export default function PlanOverviewPage() {
     [selectedPatient]
   );
 
-  const monthStart = useMemo(() => {
-    if (patientShifts.length > 0) {
-      const earliestDate = patientShifts.reduce((earliest, shift) => {
-        const current = new Date(shift.date);
-        return current < earliest ? current : earliest;
-      }, new Date(patientShifts[0]!.date));
-      return new Date(earliestDate.getFullYear(), earliestDate.getMonth(), 1);
-    }
-
-    return new Date(2025, 1, 1);
-  }, [patientShifts]);
+  const monthStart = useMemo(
+    () => new Date(selectedYear, selectedMonth, 1),
+    [selectedYear, selectedMonth]
+  );
 
   const daysInMonth = useMemo(
     () => new Date(monthStart.getFullYear(), monthStart.getMonth() + 1, 0).getDate(),
     [monthStart]
   );
+
+  const availableYears = useMemo(() => {
+    const unique = Array.from(
+      new Set(shifts.map((shift) => new Date(shift.date).getFullYear()))
+    );
+
+    if (unique.length === 0) {
+      return [fallbackYear];
+    }
+
+    return unique.sort((a, b) => a - b);
+  }, []);
+
+  const isCurrentMonth = selectedMonth === todayDate.getMonth();
 
   const rows = useMemo(() => {
     return Array.from({ length: daysInMonth }, (_, index) => {
@@ -60,12 +120,12 @@ export default function PlanOverviewPage() {
         monthStart.getMonth(),
         index + 1
       );
-      const isoDate = date.toISOString().slice(0, 10);
+      const dateKey = formatDateKey(date);
       const dayShift = patientShifts.find(
-        (shift) => shift.date === isoDate && shift.type === "day"
+        (shift) => shift.date === dateKey && shift.type === "day"
       );
       const nightShift = patientShifts.find(
-        (shift) => shift.date === isoDate && shift.type === "night"
+        (shift) => shift.date === dateKey && shift.type === "night"
       );
 
       const dayWorker = dayShift ? workerById.get(dayShift.workerId) : undefined;
@@ -77,14 +137,12 @@ export default function PlanOverviewPage() {
         monthLabel: formatMonthLabel(language, date),
         day: dayWorker?.name ?? t("overview.unassigned"),
         night: nightWorker?.name ?? t("overview.unassigned"),
+        isToday: isCurrentMonth && date.getDate() === todayDate.getDate(),
       };
     });
-  }, [daysInMonth, language, monthStart, patientShifts, t, workerById]);
+  }, [daysInMonth, isCurrentMonth, language, monthStart, patientShifts, t, todayDate, workerById]);
 
-  const preview = useMemo(
-    () => planPreviews.find((item) => item.patientId === selectedPatient),
-    [selectedPatient]
-  );
+  const todayRow = rows.find((row) => row.isToday);
 
   return (
     <div className="flex flex-col gap-5">
@@ -114,9 +172,47 @@ export default function PlanOverviewPage() {
             value={selectedPatient}
             onChange={(patientId) => setSelectedPatient(patientId)}
           />
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="text-[11px] uppercase tracking-[0.3em] text-slate-500">
+              <span className="block text-[11px]">{t("overview.calendar.monthLabel")}</span>
+              <div className="relative mt-1">
+                <select
+                  aria-label={t("overview.calendar.monthSelectAria")}
+                  className="appearance-none w-full rounded-xl border border-slate-200 bg-white px-3 py-2 pr-10 text-sm text-slate-700 shadow-sm shadow-slate-100 transition hover:border-slate-300 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={selectedMonth}
+                  onChange={(event) => setSelectedMonth(Number(event.target.value))}
+                >
+                  {monthNames.map((label, index) => (
+                    <option key={label} value={index}>
+                      {label}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden />
+              </div>
+            </label>
+            <label className="text-[11px] uppercase tracking-[0.3em] text-slate-500">
+              <span className="block text-[11px]">{t("overview.calendar.yearLabel")}</span>
+              <div className="relative mt-1">
+                <select
+                  aria-label={t("overview.calendar.yearSelectAria")}
+                  className="appearance-none w-full rounded-xl border border-slate-200 bg-white px-3 py-2 pr-10 text-sm text-slate-700 shadow-sm shadow-slate-100 transition hover:border-slate-300 focus:border-slate-500 focus:outline-none focus:ring-2 focus:ring-slate-200"
+                  value={selectedYear}
+                  onChange={(event) => setSelectedYear(Number(event.target.value))}
+                >
+                  {availableYears.map((year) => (
+                    <option key={year} value={year}>
+                      {year}
+                    </option>
+                  ))}
+                </select>
+                <ChevronDown className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" aria-hidden />
+              </div>
+            </label>
+          </div>
         </div>
 
-        <div className="grid gap-4 lg:grid-cols-[1fr_0.9fr]">
+        <div>
           <Card className="space-y-3 border border-slate-100 p-4 shadow-sm">
             <div className="flex items-center justify-between">
               <div>
@@ -152,7 +248,9 @@ export default function PlanOverviewPage() {
                 {rows.map((row) => (
                   <div
                     key={row.key}
-                    className="grid grid-cols-[1.3fr_1fr_1fr] px-4 py-3 text-sm text-slate-700 transition-colors hover:bg-slate-50"
+                    className={`grid grid-cols-[1.3fr_1fr_1fr] px-4 py-3 text-sm text-slate-700 transition-colors hover:bg-slate-50 ${
+                      row.isToday ? "bg-sky-50 text-slate-900 ring-1 ring-sky-200" : ""
+                    }`}
                   >
                     <span className="flex flex-col gap-0.5 text-slate-900">
                       <span className="text-base font-semibold leading-tight">
@@ -167,50 +265,15 @@ export default function PlanOverviewPage() {
                   </div>
                 ))}
               </div>
-            </div>
-          </Card>
-
-          <Card className="space-y-4 border border-slate-100 p-4 shadow-sm">
-            <div className="flex items-center gap-2 text-slate-700">
-              <ListChecks className="h-5 w-5" aria-hidden />
-              <div>
-                <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500">
-                  {t("overview.summary.title")}
-                </p>
-                <h3 className="text-lg font-semibold text-slate-900">
-                  {t("overview.summary.subtitle")}
-                </h3>
-              </div>
-            </div>
-
-            {preview ? (
-              <div className="space-y-3">
-                <div className="rounded-xl bg-slate-50 p-3 text-sm text-slate-700">
-                  <div className="mb-1 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                    {preview.month}
-                  </div>
-                  <p className="leading-relaxed">{preview.summary}</p>
+              {todayRow && (
+                <div className="border-t border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                  <span className="font-semibold text-slate-800">
+                    {t("overview.calendar.todayLabel")}:{" "}
+                  </span>
+                  <span className="text-slate-700">{todayDisplay}</span>
                 </div>
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
-                    <Info className="h-4 w-4 text-slate-500" aria-hidden />
-                    {t("overview.summary.highlights")}
-                  </div>
-                  <ul className="space-y-2 text-sm text-slate-700">
-                    {preview.highlights.map((item) => (
-                      <li key={item} className="flex items-start gap-2 rounded-xl bg-white px-3 py-2 shadow-sm">
-                        <span className="mt-1 inline-block h-2 w-2 rounded-full bg-sky-500" aria-hidden />
-                        <span className="leading-relaxed">{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
-              </div>
-            ) : (
-              <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-                {t("overview.summary.empty")}
-              </div>
-            )}
+              )}
+            </div>
           </Card>
         </div>
       </Card>
