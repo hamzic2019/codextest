@@ -4,13 +4,18 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo } from "react";
-import { HeartPulse, Settings2, Sparkles, Users2 } from "lucide-react";
+import { CalendarClock, HeartPulse, Settings2, Sparkles, Users2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
 import { LanguageProvider, useTranslations } from "../i18n/language-provider";
 
 const baseNavItems = [
   { labelKey: "nav.aiPlanner" as const, href: "/planner", icon: Sparkles },
+  {
+    labelKey: "nav.planOverview" as const,
+    href: "/overview",
+    icon: CalendarClock,
+  },
   { labelKey: "nav.patients" as const, href: "/patients", icon: HeartPulse },
   { labelKey: "nav.workers" as const, href: "/workers", icon: Users2 },
   { labelKey: "nav.settings" as const, href: "/settings", icon: Settings2 },
