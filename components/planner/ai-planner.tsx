@@ -2,7 +2,18 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Clock, Moon, Save, Search, Sparkles, Star, Sun, UserRoundSearch, X } from "lucide-react";
+import {
+  ChevronDown,
+  Clock,
+  Moon,
+  Save,
+  Search,
+  Sparkles,
+  Star,
+  Sun,
+  UserRoundSearch,
+  X,
+} from "lucide-react";
 import { patients, workers } from "@/lib/mock-data";
 import { Badge } from "../ui/badge";
 import { Card } from "../ui/card";
@@ -29,9 +40,48 @@ type PreviewRow = {
 };
 
 const MONTH_LABELS: Record<Language, string[]> = {
-  bs: ["jan", "feb", "mar", "apr", "maj", "jun", "jul", "avg", "sep", "okt", "nov", "dec"],
-  de: ["Jan", "Feb", "Mär", "Apr", "Mai", "Jun", "Jul", "Aug", "Sep", "Okt", "Nov", "Dez"],
-  en: ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"],
+  bs: [
+    "Januar",
+    "Februar",
+    "Mart",
+    "April",
+    "Maj",
+    "Juni",
+    "Juli",
+    "Avgust",
+    "Septembar",
+    "Oktobar",
+    "Novembar",
+    "Decembar",
+  ],
+  de: [
+    "Januar",
+    "Februar",
+    "März",
+    "April",
+    "Mai",
+    "Juni",
+    "Juli",
+    "August",
+    "September",
+    "Oktober",
+    "November",
+    "Dezember",
+  ],
+  en: [
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+  ],
 };
 
 function formatMonthLabel(language: Language, date: Date) {
@@ -373,6 +423,10 @@ export function PlannerWizard() {
     const currentYear = new Date().getFullYear();
     return Array.from({ length: 4 }, (_, index) => currentYear + index);
   }, []);
+  const selectedPlanLabel = useMemo(
+    () => formatMonthLabel(language, new Date(planYear, planMonth, 1)),
+    [language, planMonth, planYear]
+  );
   const [selectedPatient, setSelectedPatient] = useState(patients[0].id);
   const [selectedWorkers, setSelectedWorkers] = useState<WorkerPreference[]>(() =>
     workers.slice(0, 3).map((worker, index) => ({
@@ -493,27 +547,28 @@ export function PlannerWizard() {
     const finalNightCycle =
       safeNightCycle.length > 0 ? safeNightCycle : safeDayCycle;
 
-    const startTime = new Date(2025, 11, 1).getTime();
-    const previewLength = 31;
+    const previewLength = new Date(planYear, planMonth + 1, 0).getDate();
 
     return Array.from({ length: previewLength }, (_, index) => {
-      const date = new Date(startTime + index * 86_400_000);
-      const day = String(date.getDate()).padStart(2, "0");
-      const isoKey = date.toISOString();
+      const date = new Date(planYear, planMonth, index + 1);
+      const day = String(index + 1).padStart(2, "0");
+      const dateKey = `${planYear}-${String(planMonth + 1).padStart(2, "0")}-${String(
+        index + 1
+      ).padStart(2, "0")}`;
       const dayName =
         safeDayCycle[index % safeDayCycle.length]?.name ?? t("planner.shift.unknown");
       const nightName =
         finalNightCycle[index % finalNightCycle.length]?.name ?? t("planner.shift.unknown");
 
       return {
-        dateKey: isoKey,
+        dateKey,
         dayLabel: day,
         monthLabel: formatMonthLabel(language, date),
         day: dayName,
         night: nightName,
       };
     });
-  }, [language, selectedWorkers, t]);
+  }, [language, planMonth, planYear, selectedWorkers, t]);
 
   const availableWorkersByShift = useMemo(() => {
     const build = (shift: ShiftType) => {
@@ -708,46 +763,58 @@ export function PlannerWizard() {
         />
       </div>
 
-      <div className="grid gap-3 sm:grid-cols-[1fr_auto]">
-        <div className="grid gap-3 sm:grid-cols-2">
-          <label className="space-y-1 text-[11px] uppercase tracking-[0.2em] text-slate-500">
-            <span>{t("planner.generate.monthLabel")}</span>
-            <select
-              aria-label={t("planner.generate.monthLabel")}
-              className="appearance-none w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:border-slate-300 focus:border-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-100"
-              value={planMonth}
-              onChange={(event) => setPlanMonth(Number(event.target.value))}
-            >
-              {plannerMonthNames.map((label, index) => (
-                <option key={label} value={index}>
-                  {label}
-                </option>
-              ))}
-            </select>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
+        <div className="grid flex-1 gap-3 sm:grid-cols-2">
+          <label className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
+            <span className="block text-[11px]">{t("planner.generate.monthLabel")}</span>
+            <div className="relative mt-1">
+              <select
+                aria-label={t("planner.generate.monthLabel")}
+                className="appearance-none w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 pr-10 text-sm font-medium text-slate-700 shadow-sm shadow-slate-100 transition hover:border-slate-300 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                value={planMonth}
+                onChange={(event) => setPlanMonth(Number(event.target.value))}
+              >
+                {plannerMonthNames.map((label, index) => (
+                  <option key={label} value={index}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                aria-hidden
+              />
+            </div>
           </label>
-          <label className="space-y-1 text-[11px] uppercase tracking-[0.2em] text-slate-500">
-            <span>{t("planner.generate.yearLabel")}</span>
-            <select
-              aria-label={t("planner.generate.yearLabel")}
-              className="appearance-none w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition hover:border-slate-300 focus:border-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-100"
-              value={planYear}
-              onChange={(event) => setPlanYear(Number(event.target.value))}
-            >
-              {availablePlanYears.map((year) => (
-                <option key={year} value={year}>
-                  {year}
-                </option>
-              ))}
-            </select>
+          <label className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
+            <span className="block text-[11px]">{t("planner.generate.yearLabel")}</span>
+            <div className="relative mt-1">
+              <select
+                aria-label={t("planner.generate.yearLabel")}
+                className="appearance-none w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 pr-10 text-sm font-medium text-slate-700 shadow-sm shadow-slate-100 transition hover:border-slate-300 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                value={planYear}
+                onChange={(event) => setPlanYear(Number(event.target.value))}
+              >
+                {availablePlanYears.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown
+                className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                aria-hidden
+              />
+            </div>
           </label>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
-          <button className="inline-flex items-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-[1px]">
+        <div className="flex flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:pl-2">
+          <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-[1px] sm:w-auto">
             <Sparkles className="h-4 w-4" />
             {t("planner.generate")}
           </button>
-          <button className="ml-auto inline-flex items-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:-translate-y-[1px] hover:bg-emerald-600">
+          <button className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:-translate-y-[1px] hover:bg-emerald-600 sm:w-auto">
             <Save className="h-4 w-4" />
             {t("planner.save")}
           </button>
@@ -755,7 +822,7 @@ export function PlannerWizard() {
       </div>
 
       <div className="space-y-3 rounded-2xl border border-slate-200 bg-white p-4 shadow-[0_30px_60px_rgba(15,23,42,0.08)]">
-        <div className="flex items-baseline justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500">
               {t("planner.preview.kicker")}
@@ -764,12 +831,17 @@ export function PlannerWizard() {
               {t("planner.preview.title")}
             </h3>
           </div>
-          <span className="text-sm font-semibold text-slate-500">
-            {t("planner.preview.meta", {
-              days: previewRows.length,
-              workers: selectedWorkers.length,
-            })}
-          </span>
+          <div className="flex flex-col items-end gap-1 text-right">
+            <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-[11px] font-semibold tracking-[0.2em] text-slate-600">
+              {selectedPlanLabel}
+            </span>
+            <span className="text-sm font-semibold text-slate-500">
+              {t("planner.preview.meta", {
+                days: previewRows.length,
+                workers: selectedWorkers.length,
+              })}
+            </span>
+          </div>
         </div>
         <div className="overflow-hidden rounded-2xl border border-slate-100">
           <div className="grid grid-cols-[1.3fr_1fr_1fr] bg-slate-50 px-4 py-3 text-[11px] uppercase tracking-[0.3em] text-slate-500">

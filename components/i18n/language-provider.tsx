@@ -136,6 +136,8 @@ const translations = {
     "planner.promptPlaceholder":
       "Sažet opis: rotiraj noćne na 2-3 dana, Maja dnevne, bez preklopa...",
     "planner.generate": "Generiši prijedlog",
+    "planner.generate.monthLabel": "Mjesec",
+    "planner.generate.yearLabel": "Godina",
     "planner.save": "Spasi plan",
     "planner.preview.kicker": "Pregled plana",
     "planner.preview.title": "Pregled rotacije radnika",
@@ -284,6 +286,8 @@ const translations = {
     "planner.promptPlaceholder":
       "Short prompt: rotate nights every 2-3 days, Maja day shifts, avoid overlaps...",
     "planner.generate": "Generate proposal",
+    "planner.generate.monthLabel": "Month",
+    "planner.generate.yearLabel": "Year",
     "planner.save": "Save plan",
     "planner.preview.kicker": "Plan overview",
     "planner.preview.title": "Worker rotation preview",
@@ -432,6 +436,8 @@ const translations = {
     "planner.promptPlaceholder":
       "Kurzbeschreibung: Nachtdienste alle 2-3 Tage rotieren, Maja Tagdienste, keine Überschneidungen...",
     "planner.generate": "Vorschlag generieren",
+    "planner.generate.monthLabel": "Monat",
+    "planner.generate.yearLabel": "Jahr",
     "planner.save": "Plan speichern",
     "planner.preview.kicker": "Plan-Übersicht",
     "planner.preview.title": "Vorschau der Mitarbeitereinteilung",
