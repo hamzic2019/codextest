@@ -56,7 +56,7 @@ function AppShellContent({ children }: { children: ReactNode }) {
             </div>
             <div className="leading-tight">
               <div className="text-xs uppercase tracking-[0.2em] text-slate-500">
-                PflegeKI
+                PflegeKI - Your Buddy
               </div>
               <div className="text-lg font-semibold">Shift Studio</div>
             </div>

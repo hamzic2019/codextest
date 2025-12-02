@@ -13,7 +13,7 @@ const sans = Manrope({
 });
 
 export const metadata: Metadata = {
-  title: "PflegeKI",
+  title: "PflegeKI - Your Buddy",
   description:
     "Brzi AI planer za Pflegedienst timove: pacijenti, radnici, smjene i PDF izvještaji.",
 };
