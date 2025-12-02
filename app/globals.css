@@ -1,0 +1,75 @@
+@import "tailwindcss";
+
+:root {
+  --background: #f6f7fb;
+  --surface: #ffffff;
+  --card: #f9fafb;
+  --foreground: #0f172a;
+  --muted: #6b7280;
+  --border: #e2e8f0;
+  --accent: #0ea5e9;
+  --accent-2: #10b981;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-surface: var(--surface);
+  --color-card: var(--card);
+  --color-foreground: var(--foreground);
+  --color-muted: var(--muted);
+  --color-border: var(--border);
+  --color-accent: var(--accent);
+  --color-accent-2: var(--accent-2);
+  --font-sans: var(--font-sans);
+  --font-display: var(--font-display);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans), "Inter", system-ui, -apple-system, sans-serif;
+  min-height: 100vh;
+}
+
+h1,
+h2,
+h3,
+h4 {
+  font-family: var(--font-display), "Space Grotesk", "Inter", system-ui, sans-serif;
+  letter-spacing: -0.01em;
+}
+
+.calendar-slider {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(148, 163, 184, 0.35) rgba(148, 163, 184, 0.08);
+}
+
+.calendar-slider::-webkit-scrollbar {
+  height: 9px;
+}
+
+.calendar-slider::-webkit-scrollbar-track {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    #f8fafc 20%,
+    #f8fafc 80%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  border-radius: 9999px;
+}
+
+.calendar-slider::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.35);
+  border-radius: 9999px;
+  border: 2px solid #f1f5f9;
+  transition: background-color 150ms ease, opacity 150ms ease;
+}
+
+.calendar-slider:hover::-webkit-scrollbar-thumb {
+  background-color: rgba(148, 163, 184, 0.6);
+}
