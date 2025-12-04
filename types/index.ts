@@ -65,6 +65,7 @@ export type WorkerPreference = {
   ratio: number;
   days: number;
   priority: boolean;
+  spreadAcrossPatients?: boolean;
 };
 
 export type GeneratedPlan = {

@@ -38,6 +38,10 @@ type PreviewRow = {
   night: string;
 };
 
+const DAY_SHIFT_HOURS = Number(process.env.NEXT_PUBLIC_DAY_SHIFT_HOURS ?? 8);
+const NIGHT_SHIFT_HOURS = Number(process.env.NEXT_PUBLIC_NIGHT_SHIFT_HOURS ?? 10);
+const PATIENT_PRIORITY = Number(process.env.NEXT_PUBLIC_PATIENT_PRIORITY ?? 1);
+
 const MONTH_LABELS: Record<Language, string[]> = {
   bs: [
     "Januar",
@@ -108,10 +112,12 @@ function WorkerSearchSelect({
   workers,
   selectedIds,
   onSelect,
+  metaByWorker,
 }: {
   workers: Worker[];
   selectedIds: string[];
   onSelect: (workerId: string) => void;
+  metaByWorker?: Record<string, { remainingHours: number; busyLabel?: string | null }>;
 }) {
   const { t } = useTranslations();
   const [open, setOpen] = useState(false);
@@ -229,6 +235,7 @@ function WorkerSearchSelect({
               <div className="grid gap-2">
                 {filtered.map((worker) => {
                   const disabled = selectedIds.includes(worker.id);
+                  const meta = metaByWorker?.[worker.id];
                   return (
                     <button
                       key={worker.id}
@@ -258,9 +265,21 @@ function WorkerSearchSelect({
                           {worker.city} · {worker.role}
                         </div>
                       </div>
-                      <Badge variant={statusVariant(worker.status)}>
-                        {statusLabels[worker.status] ?? worker.status}
-                      </Badge>
+                      <div className="flex flex-col items-end gap-1">
+                        <Badge variant={statusVariant(worker.status)}>
+                          {statusLabels[worker.status] ?? worker.status}
+                        </Badge>
+                        {meta?.remainingHours !== undefined ? (
+                          <Badge variant="sky" className="text-[11px]">
+                            preostalo {Math.max(0, Math.round(meta.remainingHours))}h
+                          </Badge>
+                        ) : null}
+                        {meta?.busyLabel ? (
+                          <Badge variant="slate" className="text-[11px]">
+                            {meta.busyLabel}
+                          </Badge>
+                        ) : null}
+                      </div>
                     </button>
                   );
                 })}
@@ -413,6 +432,7 @@ function preferenceFromWorker(worker: Worker, priority = false): WorkerPreferenc
     ratio,
     days: 7,
     priority,
+    spreadAcrossPatients: false,
   };
 }
 
@@ -464,6 +484,26 @@ function clampRequestedDays(days: number, daysInMonth: number) {
   return Math.min(days, daysInMonth);
 }
 
+function computePreferenceHours(pref: WorkerPreference) {
+  const safeRatio =
+    pref.allowDay && pref.allowNight ? pref.ratio : pref.allowDay ? 100 : pref.allowNight ? 0 : 50;
+  const dayHours = pref.allowDay ? pref.days * (safeRatio / 100) * DAY_SHIFT_HOURS : 0;
+  const nightHours = pref.allowNight ? pref.days * ((100 - safeRatio) / 100) * NIGHT_SHIFT_HOURS : 0;
+  return { dayHours, nightHours, totalHours: dayHours + nightHours };
+}
+
+function formatBusyLabel(busy: { day: string[]; night: string[] } | undefined) {
+  if (!busy) return null;
+  const formatDates = (list: string[], suffix: string) =>
+    list
+      .slice(0, 3)
+      .map((date) => `${String(new Date(date).getDate()).padStart(2, "0")}${suffix}`);
+  const pieces = [...formatDates(busy.day ?? [], "(d)"), ...formatDates(busy.night ?? [], "(n)")];
+  if (pieces.length === 0) return null;
+  const remaining = Math.max(0, (busy.day?.length ?? 0) + (busy.night?.length ?? 0) - pieces.length);
+  return `zauzet: ${pieces.join(", ")}${remaining > 0 ? ` +${remaining}` : ""}`;
+}
+
 export function PlannerWizard() {
   const { t, language } = useTranslations();
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -495,6 +535,11 @@ export function PlannerWizard() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [sanitizationNotice, setSanitizationNotice] = useState<string | null>(null);
+  const [busyByWorker, setBusyByWorker] = useState<Record<string, { day: string[]; night: string[] }>>(
+    {}
+  );
+  const [aiWarning, setAiWarning] = useState<string | null>(null);
+  const [spreadAcrossPatients, setSpreadAcrossPatients] = useState(false);
 
   const statusLabels = useMemo(
     () => ({
@@ -542,6 +587,22 @@ export function PlannerWizard() {
     });
     return total;
   }, [assignments]);
+
+  const workerMeta = useMemo(() => {
+    const meta: Record<string, { remainingHours: number; busyLabel?: string | null }> = {};
+    workers.forEach((worker) => {
+      const pref =
+        selectedWorkers.find((item) => item.workerId === worker.id) ?? preferenceFromWorker(worker);
+      const safePref = { ...pref, days: clampRequestedDays(pref.days, daysInMonth) };
+      const { totalHours } = computePreferenceHours(safePref);
+      const remainingHours = totalHours - (worker.hoursPlanned + worker.hoursCompleted);
+      meta[worker.id] = {
+        remainingHours,
+        busyLabel: formatBusyLabel(busyByWorker[worker.id]),
+      };
+    });
+    return meta;
+  }, [busyByWorker, daysInMonth, selectedWorkers, workers]);
 
   useEffect(() => {
     const loadData = async () => {
@@ -599,6 +660,28 @@ export function PlannerWizard() {
       setSelectedWorkers(defaults);
     }
   }, [selectedWorkers.length, workers]);
+
+  useEffect(() => {
+    const fetchBusy = async () => {
+      if (!selectedPatient) {
+        setBusyByWorker({});
+        return;
+      }
+      try {
+        const res = await fetch(
+          `/api/plans?mode=busy&patientId=${selectedPatient}&month=${planMonth + 1}&year=${planYear}`
+        );
+        if (!res.ok) throw new Error("busy fetch failed");
+        const json = await res.json();
+        setBusyByWorker(json.data ?? {});
+      } catch (error) {
+        console.error(error);
+        setBusyByWorker({});
+      }
+    };
+
+    fetchBusy();
+  }, [planMonth, planYear, selectedPatient]);
 
   const availableWorkersByShift = useMemo(() => {
     const build = (shift: ShiftType) => {
@@ -728,6 +811,7 @@ export function PlannerWizard() {
     setStatusMessage(null);
     setErrorMessage(null);
     setSanitizationNotice(null);
+    setAiWarning(null);
 
     try {
       const clampedWorkers = selectedWorkers.map((worker) => ({
@@ -739,21 +823,29 @@ export function PlannerWizard() {
       );
       const notices: string[] = [];
       if (wasClamped) {
-        notices.push(t("planner.daysClamped", { max: daysInMonth }));
+        notices.push(`Broj dana je ograničen na ${daysInMonth}; to je želja, planer može dodati smjenu radi pokrivanja.`);
       }
 
-      const totalSlots = daysInMonth * 2;
-      const requested = clampedWorkers.reduce((sum, worker) => sum + worker.days, 0);
-      const requestedDay = clampedWorkers.reduce(
-        (sum, worker) => sum + worker.days * (worker.ratio / 100),
-        0
+      const requestedHours = clampedWorkers.reduce(
+        (acc, worker) => {
+          const hours = computePreferenceHours(worker);
+          return {
+            day: acc.day + hours.dayHours,
+            night: acc.night + hours.nightHours,
+          };
+        },
+        { day: 0, night: 0 }
       );
-      const requestedNight = requested - requestedDay;
+      const requestedTotalHours = requestedHours.day + requestedHours.night;
+      const dayHoursAvailable = daysInMonth * DAY_SHIFT_HOURS;
+      const nightHoursAvailable = daysInMonth * NIGHT_SHIFT_HOURS;
+      const totalHoursAvailable = dayHoursAvailable + nightHoursAvailable;
       notices.push(
-        `Traženo ${requested} smjena (dnevne ≈ ${Math.round(requestedDay)}, noćne ≈ ${Math.round(
-          requestedNight
-        )}); dostupno ${totalSlots} slotova (${daysInMonth} dnevnih / ${daysInMonth} noćnih).`
+        `Traženo ${Math.round(requestedTotalHours)}h (dnevne ≈ ${Math.round(requestedHours.day)}h, noćne ≈ ${Math.round(requestedHours.night)}h); dostupno ${Math.round(totalHoursAvailable)}h (${Math.round(dayHoursAvailable)}h dnevno / ${Math.round(nightHoursAvailable)}h noćno).`
       );
+      if (requestedHours.day > dayHoursAvailable || requestedHours.night > nightHoursAvailable) {
+        notices.push("Upozorenje: tražene dnevne/noćne smjene prelaze slobodne sate u mjesecu.");
+      }
       setSanitizationNotice(notices.join(" · "));
 
       const response = await fetch("/api/plans/generate", {
@@ -765,6 +857,8 @@ export function PlannerWizard() {
           month: planMonth + 1,
           year: planYear,
           prompt: promptText,
+          spreadAcrossPatients,
+          patientPriority: PATIENT_PRIORITY,
         }),
       });
 
@@ -776,6 +870,7 @@ export function PlannerWizard() {
       const assignmentList: PlanAssignment[] = json.data?.assignments ?? [];
       setAssignments(assignmentsListToMap(assignmentList));
       setGeneratedSummary(json.data?.summary ?? null);
+      setAiWarning(json.data?.aiWarning ?? null);
       setStatusMessage(t("planner.generateSuccess"));
     } catch (error) {
       console.error(error);
@@ -879,6 +974,11 @@ export function PlannerWizard() {
             {errorMessage}
           </span>
         ) : null}
+        {aiWarning ? (
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+            {aiWarning}
+          </span>
+        ) : null}
         {sanitizationNotice ? (
           <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
             {sanitizationNotice}
@@ -903,6 +1003,7 @@ export function PlannerWizard() {
           workers={workers}
           selectedIds={selectedIds}
           onSelect={upsertWorker}
+          metaByWorker={workerMeta}
         />
 
         {isLoadingData ? (
@@ -921,6 +1022,7 @@ export function PlannerWizard() {
           {selectedWorkers.map((item) => {
             const worker = workerById.get(item.workerId);
             if (!worker) return null;
+            const meta = workerMeta[worker.id];
             const focusLabel =
               item.ratio === 50
                 ? t("planner.worker.focusBalanced")
@@ -946,6 +1048,18 @@ export function PlannerWizard() {
                         {statusLabels[worker.status] ?? worker.status}
                       </Badge>
                       <Badge variant="sky">{worker.city}</Badge>
+                      {meta ? (
+                        <>
+                          <Badge variant="slate" className="text-[11px]">
+                            preostalo {Math.max(0, Math.round(meta.remainingHours))}h
+                          </Badge>
+                          {meta.busyLabel ? (
+                            <Badge variant="sky" className="text-[11px]">
+                              {meta.busyLabel}
+                            </Badge>
+                          ) : null}
+                        </>
+                      ) : null}
                       {item.priority ? (
                         <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700">
                           <Star className="h-3.5 w-3.5" /> {t("planner.worker.priority")}
@@ -990,6 +1104,21 @@ export function PlannerWizard() {
                     {item.priority
                       ? t("planner.worker.priority")
                       : t("planner.worker.addPriority")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() =>
+                      updateWorker(item.workerId, {
+                        spreadAcrossPatients: !item.spreadAcrossPatients,
+                      })
+                    }
+                    className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
+                      item.spreadAcrossPatients
+                        ? "border-sky-200 bg-sky-50 text-sky-800"
+                        : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
+                    }`}
+                  >
+                    ravnomjerno pacijenti
                   </button>
                 </div>
 
@@ -1039,7 +1168,7 @@ export function PlannerWizard() {
                     </div>
                   </div>
                   <p className="text-[11px] text-slate-500">
-                    Broj dana je želja; ako nema dovoljno pokrivenosti, planer može dodati koji dan više.
+                    Broj dana je želja; ako nema dovoljno pokrivenosti, planer može dodati poneku smjenu.
                   </p>
                 </div>
               </div>
@@ -1059,6 +1188,21 @@ export function PlannerWizard() {
           value={promptText}
           onChange={(event) => setPromptText(event.target.value)}
         />
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3 rounded-2xl border border-slate-100 bg-slate-50 px-3 py-2">
+        <label className="flex items-center gap-2 text-sm font-semibold text-slate-700">
+          <input
+            type="checkbox"
+            checked={spreadAcrossPatients}
+            onChange={(event) => setSpreadAcrossPatients(event.target.checked)}
+            className="h-4 w-4 rounded border-slate-300 text-sky-600 focus:ring-sky-200"
+          />
+          Ravnomjerno preko pacijenata
+        </label>
+        <span className="text-xs text-slate-500">
+          Gornji limit oko 60% ukupnih sati po pacijentu.
+        </span>
       </div>
 
       <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">

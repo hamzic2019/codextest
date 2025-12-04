@@ -81,6 +81,48 @@ export async function GET(request: Request) {
     const month = Number(monthParam);
     const year = Number(yearParam);
 
+    if (mode === "busy") {
+      if (!patientId || Number.isNaN(month) || Number.isNaN(year)) {
+        return NextResponse.json(
+          { error: "patientId, month i year su obavezni parametri." },
+          { status: 400 }
+        );
+      }
+
+      const { data: otherPlans, error: busyPlanError } = await supabase
+        .from("plans")
+        .select("id")
+        .eq("month", month)
+        .eq("year", year)
+        .neq("patient_id", patientId);
+
+      if (busyPlanError) throw busyPlanError;
+      const planIds = (otherPlans ?? []).map((plan) => plan.id).filter(Boolean);
+      const busyByWorker: Record<string, { day: string[]; night: string[] }> = {};
+
+      if (planIds.length > 0) {
+        const { data: busyRows, error: busyError } = await supabase
+          .from("plan_assignments")
+          .select("date, shift_type, worker_id")
+          .in("plan_id", planIds);
+        if (busyError) throw busyError;
+
+        busyRows?.forEach((row) => {
+          if (!row.worker_id) return;
+          if (!busyByWorker[row.worker_id]) busyByWorker[row.worker_id] = { day: [], night: [] };
+          if (row.shift_type === "day") busyByWorker[row.worker_id].day.push(row.date);
+          else busyByWorker[row.worker_id].night.push(row.date);
+        });
+      }
+
+      Object.values(busyByWorker).forEach((entry) => {
+        entry.day.sort();
+        entry.night.sort();
+      });
+
+      return NextResponse.json({ data: busyByWorker });
+    }
+
     if (!patientId || Number.isNaN(month) || Number.isNaN(year)) {
       return NextResponse.json(
         { error: "patientId, month i year su obavezni parametri." },
