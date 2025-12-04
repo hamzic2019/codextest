@@ -1,4 +1,3 @@
-/* Patient list with translated labels */
 "use client";
 
 import Link from "next/link";
@@ -10,8 +9,18 @@ import { useTranslations } from "../i18n/language-provider";
 const actionButtonStyles =
   "inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50";
 
-export function PatientList({ patients }: { patients: Patient[] }) {
+export function PatientList({
+  patients,
+  isLoading,
+  error,
+}: {
+  patients: Patient[];
+  isLoading?: boolean;
+  error?: string | null;
+}) {
   const { t } = useTranslations();
+
+  const isEmpty = !isLoading && !error && patients.length === 0;
 
   return (
     <Card className="p-0">
@@ -29,6 +38,22 @@ export function PatientList({ patients }: { patients: Patient[] }) {
           <span>{t("patients.list.name")}</span>
           <span className="text-right">{t("patients.list.actions")}</span>
         </div>
+
+        {isLoading ? (
+          <div className="px-5 py-6 text-sm text-slate-600">
+            {t("patients.list.loading")}
+          </div>
+        ) : null}
+
+        {error ? (
+          <div className="px-5 py-6 text-sm font-semibold text-red-600">{error}</div>
+        ) : null}
+
+        {isEmpty ? (
+          <div className="px-5 py-6 text-sm text-slate-600">
+            {t("patients.list.empty")}
+          </div>
+        ) : null}
 
         {patients.map((patient) => (
           <div

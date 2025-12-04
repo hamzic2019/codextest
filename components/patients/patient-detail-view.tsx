@@ -21,6 +21,8 @@ export function PatientDetailView({
 }) {
   const { t } = useTranslations();
   const backLabel = t("common.backTo", { target: t("nav.patients") });
+  const tags = patient.tags ?? [];
+  const needs = patient.needs ?? (patient.notes ? [patient.notes] : []);
 
   return (
     <div className="flex flex-col gap-5">
@@ -45,23 +47,25 @@ export function PatientDetailView({
             </p>
           </div>
           <div className="ml-auto flex flex-wrap gap-2 text-sm text-slate-600">
-            {patient.tags.map((tag) => (
+            {tags.map((tag) => (
               <Badge key={tag} variant="emerald">
                 {tag}
               </Badge>
             ))}
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap gap-2 text-sm text-slate-700">
-          {patient.needs.map((need) => (
-            <span
-              key={need}
-              className="rounded-xl bg-white px-3 py-2 text-slate-800 shadow-inner shadow-slate-100"
-            >
-              {need}
-            </span>
-          ))}
-        </div>
+        {needs.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-2 text-sm text-slate-700">
+            {needs.map((need) => (
+              <span
+                key={need}
+                className="rounded-xl bg-white px-3 py-2 text-slate-800 shadow-inner shadow-slate-100"
+              >
+                {need}
+              </span>
+            ))}
+          </div>
+        ) : null}
       </Card>
 
       <SectionHeader

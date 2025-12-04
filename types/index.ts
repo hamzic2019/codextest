@@ -2,28 +2,40 @@ export type ShiftType = "day" | "night";
 
 export type WorkerStatus = "radnik" | "anerkennung" | "pocetnik";
 
-export interface Worker {
-  id: string;
-  name: string;
-  role: string;
-  status: WorkerStatus;
-  preferredShifts: ShiftType[];
-  hoursPlanned: number;
-  hoursCompleted: number;
-  city: string;
-}
-
-export interface Patient {
+export type Patient = {
   id: string;
   name: string;
   city: string;
   level: string;
-  needs: string[];
-  lastUpdate: string;
-  tags: string[];
-}
+  notes?: string | null;
+  createdAt?: string;
+  needs?: string[];
+  tags?: string[];
+  lastUpdate?: string;
+};
 
-export interface Shift {
+export type Worker = {
+  id: string;
+  name: string;
+  role: string;
+  city: string;
+  status: WorkerStatus;
+  preferredShifts: ShiftType[];
+  hoursPlanned: number;
+  hoursCompleted: number;
+  createdAt?: string;
+};
+
+export type PlanStatus = "draft" | "saved";
+
+export type PlanAssignment = {
+  date: string; // YYYY-MM-DD
+  shiftType: ShiftType;
+  workerId: string | null;
+  note?: string | null;
+};
+
+export type Shift = {
   id: string;
   patientId: string;
   workerId: string;
@@ -32,11 +44,37 @@ export interface Shift {
   start: string;
   end: string;
   note?: string;
-}
+};
 
-export interface PlanPreview {
+export type Plan = {
+  id: string;
   patientId: string;
-  month: string;
-  summary: string;
+  month: number; // 1-12
+  year: number;
+  prompt?: string | null;
+  summary?: string | null;
+  status: PlanStatus;
+  assignments: PlanAssignment[];
+  createdAt?: string;
+};
+
+export type WorkerPreference = {
+  workerId: string;
+  allowDay: boolean;
+  allowNight: boolean;
+  ratio: number;
+  days: number;
+  priority: boolean;
+};
+
+export type GeneratedPlan = {
+  assignments: PlanAssignment[];
+  summary?: string | null;
+};
+
+export type PlanPreview = {
+  patientId?: string;
+  month?: string;
+  summary?: string | null;
   highlights: string[];
-}
+};

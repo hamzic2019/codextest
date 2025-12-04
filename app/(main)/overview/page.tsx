@@ -1,12 +1,12 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { CalendarClock, ChevronDown, Moon, Sun } from "lucide-react";
 import { PatientSelector } from "@/components/planner/patient-selector";
 import { Card } from "@/components/ui/card";
-import { patients, shifts, workers } from "@/lib/mock-data";
 import { useTranslations } from "@/components/i18n/language-provider";
 import type { Language } from "@/components/i18n/language-provider";
+import type { Patient, PlanAssignment, Worker } from "@/types";
 
 const MONTH_LABELS: Record<Language, string[]> = {
   bs: [
@@ -72,21 +72,19 @@ export default function PlanOverviewPage() {
   const fallbackYear = todayDate.getFullYear();
   const fallbackMonth = todayDate.getMonth();
   const todayDisplay = `${todayDate.getDate()}. ${monthNames[todayDate.getMonth()]}`;
-  const [selectedPatient, setSelectedPatient] = useState<string>(
-    () => patients[0]?.id ?? ""
-  );
-
+  const [patientsState, setPatientsState] = useState<Patient[]>([]);
+  const [workersState, setWorkersState] = useState<Worker[]>([]);
+  const [planAssignments, setPlanAssignments] = useState<PlanAssignment[]>([]);
+  const [selectedPatient, setSelectedPatient] = useState<string>("");
   const [selectedYear, setSelectedYear] = useState(() => fallbackYear);
   const [selectedMonth, setSelectedMonth] = useState(() => fallbackMonth);
+  const [availablePlans, setAvailablePlans] = useState<{ month: number; year: number }[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const workerById = useMemo(
-    () => new Map(workers.map((worker) => [worker.id, worker])),
-    []
-  );
-
-  const patientShifts = useMemo(
-    () => shifts.filter((shift) => shift.patientId === selectedPatient),
-    [selectedPatient]
+    () => new Map(workersState.map((worker) => [worker.id, worker])),
+    [workersState]
   );
 
   const monthStart = useMemo(
@@ -99,17 +97,32 @@ export default function PlanOverviewPage() {
     [monthStart]
   );
 
+  const assignmentByDate = useMemo(() => {
+    const map = new Map<
+      string,
+      {
+        day?: string | null;
+        night?: string | null;
+      }
+    >();
+
+    planAssignments.forEach((assignment) => {
+      const existing = map.get(assignment.date) ?? {};
+      map.set(assignment.date, {
+        ...existing,
+        [assignment.shiftType]: assignment.workerId ?? null,
+      });
+    });
+
+    return map;
+  }, [planAssignments]);
+
   const availableYears = useMemo(() => {
-    const unique = Array.from(
-      new Set(shifts.map((shift) => new Date(shift.date).getFullYear()))
+    const unique = Array.from(new Set(availablePlans.map((item) => item.year))).sort(
+      (a, b) => a - b
     );
-
-    if (unique.length === 0) {
-      return [fallbackYear];
-    }
-
-    return unique.sort((a, b) => a - b);
-  }, []);
+    return unique.length > 0 ? unique : [fallbackYear];
+  }, [availablePlans, fallbackYear]);
 
   const isCurrentMonth = selectedMonth === todayDate.getMonth();
 
@@ -121,15 +134,11 @@ export default function PlanOverviewPage() {
         index + 1
       );
       const dateKey = formatDateKey(date);
-      const dayShift = patientShifts.find(
-        (shift) => shift.date === dateKey && shift.type === "day"
-      );
-      const nightShift = patientShifts.find(
-        (shift) => shift.date === dateKey && shift.type === "night"
-      );
+      const dayWorkerId = assignmentByDate.get(dateKey)?.day;
+      const nightWorkerId = assignmentByDate.get(dateKey)?.night;
 
-      const dayWorker = dayShift ? workerById.get(dayShift.workerId) : undefined;
-      const nightWorker = nightShift ? workerById.get(nightShift.workerId) : undefined;
+      const dayWorker = dayWorkerId ? workerById.get(dayWorkerId) : undefined;
+      const nightWorker = nightWorkerId ? workerById.get(nightWorkerId) : undefined;
 
       return {
         key: date.toISOString(),
@@ -140,9 +149,82 @@ export default function PlanOverviewPage() {
         isToday: isCurrentMonth && date.getDate() === todayDate.getDate(),
       };
     });
-  }, [daysInMonth, isCurrentMonth, language, monthStart, patientShifts, t, todayDate, workerById]);
+  }, [assignmentByDate, daysInMonth, isCurrentMonth, language, monthStart, t, todayDate, workerById]);
 
   const todayRow = rows.find((row) => row.isToday);
+
+  useEffect(() => {
+    const loadBaseData = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const [patientsRes, workersRes] = await Promise.all([
+          fetch("/api/patients"),
+          fetch("/api/workers"),
+        ]);
+
+        if (!patientsRes.ok || !workersRes.ok) {
+          throw new Error("Network error");
+        }
+
+        const patientsJson = await patientsRes.json();
+        const workersJson = await workersRes.json();
+        setPatientsState(patientsJson.data ?? []);
+        setWorkersState(workersJson.data ?? []);
+        if (!selectedPatient && patientsJson.data?.length) {
+          setSelectedPatient(patientsJson.data[0].id);
+        }
+      } catch (err) {
+        console.error(err);
+        setError(t("overview.loadError"));
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    loadBaseData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!selectedPatient) return;
+    const loadAvailablePlans = async () => {
+      try {
+        const response = await fetch(
+          `/api/plans?patientId=${selectedPatient}&mode=available`
+        );
+        if (!response.ok) throw new Error("Failed to load available plans");
+        const json = await response.json();
+        setAvailablePlans(json.data ?? []);
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    loadAvailablePlans();
+  }, [selectedPatient]);
+
+  useEffect(() => {
+    if (!selectedPatient) return;
+    const loadPlan = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        const response = await fetch(
+          `/api/plans?patientId=${selectedPatient}&month=${selectedMonth + 1}&year=${selectedYear}`
+        );
+        if (!response.ok) throw new Error("Failed to load plan");
+        const json = await response.json();
+        setPlanAssignments(json.data?.assignments ?? []);
+      } catch (err) {
+        console.error(err);
+        setPlanAssignments([]);
+        setError(t("overview.loadError"));
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    loadPlan();
+  }, [selectedPatient, selectedMonth, selectedYear, t]);
 
   return (
     <div className="flex flex-col gap-5">
@@ -168,10 +250,16 @@ export default function PlanOverviewPage() {
             {t("planner.patient.label")}
           </p>
           <PatientSelector
-            data={patients}
+            data={patientsState}
             value={selectedPatient}
             onChange={(patientId) => setSelectedPatient(patientId)}
+            isLoading={isLoading}
           />
+          {error ? (
+            <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
+              {error}
+            </div>
+          ) : null}
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-[11px] uppercase tracking-[0.3em] text-slate-500">
               <span className="block text-[11px]">{t("overview.calendar.monthLabel")}</span>
@@ -229,6 +317,16 @@ export default function PlanOverviewPage() {
             </div>
 
             <div className="overflow-hidden rounded-2xl border border-slate-100">
+              {isLoading ? (
+                <div className="px-4 py-3 text-sm text-slate-600">
+                  {t("overview.loading")}
+                </div>
+              ) : null}
+              {!isLoading && planAssignments.length === 0 ? (
+                <div className="px-4 py-3 text-sm text-slate-600">
+                  {t("overview.noPlan")}
+                </div>
+              ) : null}
               <div className="grid grid-cols-[1.3fr_1fr_1fr] bg-slate-50 px-4 py-3 text-[11px] uppercase tracking-[0.3em] text-slate-500">
                 <span>{t("planner.preview.date")}</span>
                 <span className="text-left">

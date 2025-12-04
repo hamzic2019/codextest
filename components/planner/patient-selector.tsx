@@ -4,7 +4,6 @@ import { useMemo, useState } from "react";
 import { ChevronsUpDown, HeartPulse } from "lucide-react";
 
 import type { Patient } from "@/types";
-import { patients } from "@/lib/mock-data";
 import { Badge } from "../ui/badge";
 import { Card } from "../ui/card";
 import { useTranslations } from "../i18n/language-provider";
@@ -21,11 +20,13 @@ function initials(name: string) {
 export function PatientSelector({
   value,
   onChange,
-  data = patients,
+  data = [],
+  isLoading = false,
 }: {
   value: string;
   onChange: (patientId: string) => void;
   data?: Patient[];
+  isLoading?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const { t } = useTranslations();
@@ -79,6 +80,17 @@ export function PatientSelector({
 
       {open && (
         <Card className="absolute left-0 right-0 z-20 mt-2 space-y-1 border border-slate-200/70 bg-white/95 p-2 shadow-[0_20px_55px_rgba(15,23,42,0.16)] backdrop-blur">
+          {isLoading ? (
+            <div className="px-3 py-2 text-sm text-slate-600">
+              {t("planner.patient.loading")}
+            </div>
+          ) : null}
+          {!isLoading && data.length === 0 ? (
+            <div className="px-3 py-2 text-sm text-slate-600">
+              {t("planner.patient.empty")}
+            </div>
+          ) : null}
+
           {data.map((patient) => (
             <button
               key={patient.id}

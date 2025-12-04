@@ -1,4 +1,3 @@
-/* Worker list aligned with patient list design */
 "use client";
 
 import Link from "next/link";
@@ -10,8 +9,18 @@ import { useTranslations } from "../i18n/language-provider";
 const actionButtonStyles =
   "inline-flex items-center gap-1 rounded-lg border border-slate-200 px-3 py-2 text-sm font-medium text-slate-700 transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50";
 
-export function WorkerList({ workers }: { workers: Worker[] }) {
+export function WorkerList({
+  workers,
+  isLoading,
+  error,
+}: {
+  workers: Worker[];
+  isLoading?: boolean;
+  error?: string | null;
+}) {
   const { t } = useTranslations();
+
+  const isEmpty = !isLoading && !error && workers.length === 0;
 
   return (
     <Card className="p-0">
@@ -29,6 +38,20 @@ export function WorkerList({ workers }: { workers: Worker[] }) {
           <span>{t("workers.list.name")}</span>
           <span className="text-right">{t("workers.list.actions")}</span>
         </div>
+
+        {isLoading ? (
+          <div className="px-5 py-6 text-sm text-slate-600">
+            {t("workers.list.loading")}
+          </div>
+        ) : null}
+
+        {error ? (
+          <div className="px-5 py-6 text-sm font-semibold text-red-600">{error}</div>
+        ) : null}
+
+        {isEmpty ? (
+          <div className="px-5 py-6 text-sm text-slate-600">{t("workers.list.empty")}</div>
+        ) : null}
 
         {workers.map((worker) => (
           <div
