@@ -17,10 +17,10 @@ function mapWorker(row: {
   return {
     id: row.id,
     name: row.name,
-    role: row.role,
+    role: row.role ?? "—",
     city: row.city,
     status: row.status,
-    preferredShifts: row.preferred_shifts ?? [],
+    preferredShifts: row.preferred_shifts && row.preferred_shifts.length > 0 ? row.preferred_shifts : ["day", "night"],
     hoursPlanned: row.hours_planned ?? 0,
     hoursCompleted: row.hours_completed ?? 0,
     createdAt: row.created_at,
@@ -51,18 +51,27 @@ export async function POST(request: Request) {
   try {
     const payload = await request.json();
     const name = String(payload.name ?? "").trim();
-    const role = String(payload.role ?? "").trim();
     const city = String(payload.city ?? "").trim();
-    const status = (payload.status ?? "radnik") as WorkerStatus;
+    const allowedStatuses: WorkerStatus[] = [
+      "radnik",
+      "anarbeitung",
+      "student",
+      "externi",
+      "pocetnik",
+      "anerkennung",
+    ];
+    const incomingStatus = String(payload.status ?? "").trim() as WorkerStatus;
+    const status = allowedStatuses.includes(incomingStatus) ? incomingStatus : "radnik";
+    const role = String(payload.role ?? "").trim() || status;
     const preferredShifts = Array.isArray(payload.preferredShifts)
       ? (payload.preferredShifts as ShiftType[])
-      : ["day"];
+      : ["day", "night"];
     const hoursPlanned = Number(payload.hoursPlanned) || 0;
     const hoursCompleted = Number(payload.hoursCompleted) || 0;
 
-    if (!name || !role || !city) {
+    if (!name || !city) {
       return NextResponse.json(
-        { error: "Ime, uloga i grad su obavezni." },
+        { error: "Ime i grad su obavezni." },
         { status: 400 }
       );
     }

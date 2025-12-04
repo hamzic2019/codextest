@@ -90,8 +90,9 @@ function formatMonthLabel(language: Language, date: Date) {
 }
 
 function statusVariant(status: Worker["status"]) {
-  if (status === "anerkennung") return "amber" as const;
-  if (status === "pocetnik") return "slate" as const;
+  if (status === "anarbeitung" || status === "anerkennung") return "amber" as const;
+  if (status === "pocetnik" || status === "student") return "sky" as const;
+  if (status === "externi") return "slate" as const;
   return "emerald" as const;
 }
 
@@ -121,6 +122,9 @@ function WorkerSearchSelect({
   const statusLabels = useMemo(
     () => ({
       radnik: t("planner.worker.status.radnik"),
+      anarbeitung: t("planner.worker.status.anarbeitung"),
+      student: t("planner.worker.status.student"),
+      externi: t("planner.worker.status.externi"),
       pocetnik: t("planner.worker.status.pocetnik"),
       anerkennung: t("planner.worker.status.anerkennung"),
     }),
@@ -132,10 +136,12 @@ function WorkerSearchSelect({
     return workers.filter((worker) => {
       if (selectedIds.includes(worker.id)) return false;
       if (!term) return true;
+      const safeRole = (worker.role ?? "").toLowerCase();
+      const safeCity = (worker.city ?? "").toLowerCase();
       return (
         worker.name.toLowerCase().includes(term) ||
-        worker.role.toLowerCase().includes(term) ||
-        worker.city.toLowerCase().includes(term)
+        safeRole.includes(term) ||
+        safeCity.includes(term)
       );
     });
   }, [query, workers, selectedIds]);
@@ -254,9 +260,9 @@ function WorkerSearchSelect({
                         <div className="text-sm font-semibold text-slate-900 group-hover:text-slate-700">
                           {worker.name}
                         </div>
-                        <div className="text-xs text-slate-500 group-hover:text-slate-700">
-                          {worker.city} · {worker.role}
-                        </div>
+                      <div className="text-xs text-slate-500 group-hover:text-slate-700">
+                          {worker.city} · {worker.role || t("planner.worker.roleFallback")}
+                      </div>
                       </div>
                       <Badge variant={statusVariant(worker.status)}>
                         {statusLabels[worker.status] ?? worker.status}
@@ -358,7 +364,7 @@ function ShiftDropdownCell({
                   {worker.name}
                 </span>
                 <span className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
-                  {worker.city} · {worker.role}
+                  {worker.city} · {worker.role || t("planner.worker.roleFallback")}
                 </span>
               </button>
             ))
@@ -397,11 +403,15 @@ function ShiftToggle({
 }
 
 function preferenceFromWorker(worker: Worker, priority = false): WorkerPreference {
-  const allowDay = worker.preferredShifts.includes("day");
-  const allowNight = worker.preferredShifts.includes("night");
+  const shifts =
+    worker.preferredShifts && worker.preferredShifts.length > 0
+      ? worker.preferredShifts
+      : (["day", "night"] as ShiftType[]);
+  const allowDay = shifts.includes("day");
+  const allowNight = shifts.includes("night");
   const ratio =
-    worker.preferredShifts.length === 1
-      ? worker.preferredShifts[0] === "day"
+    shifts.length === 1
+      ? shifts[0] === "day"
         ? 70
         : 30
       : 50;
@@ -499,6 +509,9 @@ export function PlannerWizard() {
   const statusLabels = useMemo(
     () => ({
       radnik: t("planner.worker.status.radnik"),
+      anarbeitung: t("planner.worker.status.anarbeitung"),
+      student: t("planner.worker.status.student"),
+      externi: t("planner.worker.status.externi"),
       pocetnik: t("planner.worker.status.pocetnik"),
       anerkennung: t("planner.worker.status.anerkennung"),
     }),
@@ -609,7 +622,9 @@ export function PlannerWizard() {
 
       if (fromPref.length > 0) return fromPref;
 
-      return workers.filter((worker) => worker.preferredShifts.includes(shift));
+      return workers.filter((worker) =>
+        (worker.preferredShifts ?? ["day", "night"]).includes(shift)
+      );
     };
 
     return {
@@ -960,7 +975,9 @@ export function PlannerWizard() {
                         <X className="h-4 w-4" />
                       </button>
                     </div>
-                    <p className="text-xs text-slate-500">{worker.role}</p>
+                    <p className="text-xs text-slate-500">
+                      {worker.role || t("planner.worker.roleFallback")}
+                    </p>
                   </div>
                 </div>
 

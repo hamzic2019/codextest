@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { Clock3, MoveLeft, Moon, Sun } from "lucide-react";
+import { Clock3, MoveLeft, Sun } from "lucide-react";
 import type { Patient, Shift, Worker } from "@/types";
 import { Card } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -9,8 +9,9 @@ import { SectionHeader } from "@/components/ui/section-header";
 import { useTranslations } from "@/components/i18n/language-provider";
 
 function statusBadgeVariant(status: Worker["status"]) {
-  if (status === "anerkennung") return "amber" as const;
-  if (status === "pocetnik") return "slate" as const;
+  if (status === "anarbeitung" || status === "anerkennung") return "amber" as const;
+  if (status === "pocetnik" || status === "student") return "sky" as const;
+  if (status === "externi") return "slate" as const;
   return "emerald" as const;
 }
 
@@ -27,6 +28,9 @@ export function WorkerDetailView({
   const backLabel = t("common.backTo", { target: t("nav.workers") });
   const statusLabels = {
     radnik: t("planner.worker.status.radnik"),
+    anarbeitung: t("planner.worker.status.anarbeitung"),
+    student: t("planner.worker.status.student"),
+    externi: t("planner.worker.status.externi"),
     pocetnik: t("planner.worker.status.pocetnik"),
     anerkennung: t("planner.worker.status.anerkennung"),
   };
@@ -49,35 +53,26 @@ export function WorkerDetailView({
               {t("workerDetail.label")}
             </p>
             <h1 className="text-xl font-semibold text-slate-900">{worker.name}</h1>
-            <p className="text-sm text-slate-600">{worker.role}</p>
+            <p className="text-sm text-slate-600">{worker.city}</p>
           </div>
           <div className="ml-auto flex flex-wrap gap-2 text-sm text-slate-600">
             <Badge variant={statusBadgeVariant(worker.status)}>
               {statusLabels[worker.status] ?? worker.status}
             </Badge>
-            <Badge variant="sky">{worker.city}</Badge>
+            <Badge variant="emerald">
+              {t("workerDetail.planned", { hours: worker.hoursPlanned ?? 0 })}
+            </Badge>
           </div>
         </div>
-        <div className="mt-3 flex flex-wrap items-center gap-3 text-sm text-slate-700">
-          <span className="inline-flex items-center gap-2 rounded-xl bg-white px-3 py-2 text-slate-800 shadow-inner shadow-slate-100">
+        <div className="mt-3 grid gap-3 sm:grid-cols-2">
+          <div className="flex items-center gap-2 rounded-2xl border border-white/70 bg-white/80 px-3 py-2 text-sm font-semibold text-slate-800 shadow-inner shadow-slate-100">
             <Clock3 className="h-4 w-4 text-emerald-600" />
-            {t("workerDetail.planned", { hours: worker.hoursPlanned })}
-          </span>
-          <span className="inline-flex items-center gap-2 rounded-xl bg-slate-100 px-3 py-2 text-slate-800">
-            {t("workerDetail.completed", { hours: worker.hoursCompleted })}
-          </span>
-          {worker.preferredShifts.includes("day") ? (
-            <span className="inline-flex items-center gap-2 rounded-xl bg-sky-50 px-3 py-2 text-sky-700">
-              <Sun className="h-4 w-4" />
-              {t("workerDetail.shift.day")}
-            </span>
-          ) : null}
-          {worker.preferredShifts.includes("night") ? (
-            <span className="inline-flex items-center gap-2 rounded-xl bg-slate-900/90 px-3 py-2 text-white">
-              <Moon className="h-4 w-4" />
-              {t("workerDetail.shift.night")}
-            </span>
-          ) : null}
+            {t("workerDetail.planned", { hours: worker.hoursPlanned ?? 0 })}
+          </div>
+          <div className="flex items-center gap-2 rounded-2xl border border-white/70 bg-white/80 px-3 py-2 text-sm font-semibold text-slate-800 shadow-inner shadow-slate-100">
+            <Sun className="h-4 w-4 text-slate-500" />
+            {statusLabels[worker.status] ?? worker.status}
+          </div>
         </div>
       </Card>
 

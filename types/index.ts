@@ -1,6 +1,12 @@
 export type ShiftType = "day" | "night";
 
-export type WorkerStatus = "radnik" | "anerkennung" | "pocetnik";
+export type WorkerStatus =
+  | "radnik"
+  | "anarbeitung"
+  | "student"
+  | "externi"
+  | "pocetnik"
+  | "anerkennung";
 
 export type Patient = {
   id: string;
@@ -17,12 +23,12 @@ export type Patient = {
 export type Worker = {
   id: string;
   name: string;
-  role: string;
   city: string;
   status: WorkerStatus;
-  preferredShifts: ShiftType[];
   hoursPlanned: number;
-  hoursCompleted: number;
+  role?: string;
+  preferredShifts?: ShiftType[];
+  hoursCompleted?: number;
   createdAt?: string;
 };
 

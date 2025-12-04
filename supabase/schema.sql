@@ -15,10 +15,10 @@ create table if not exists public.patients (
 create table if not exists public.workers (
   id uuid primary key default gen_random_uuid(),
   name text not null,
-  role text not null,
   city text not null,
-  status text not null check (status in ('radnik', 'pocetnik', 'anerkennung')),
-  preferred_shifts text[] not null default '{}',
+  role text not null default '—',
+  status text not null check (status in ('radnik', 'anarbeitung', 'student', 'externi', 'pocetnik', 'anerkennung')),
+  preferred_shifts text[] not null default '{day,night}',
   hours_planned integer not null default 0,
   hours_completed integer not null default 0,
   created_at timestamptz not null default now()

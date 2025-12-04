@@ -44,7 +44,7 @@ export type Database = {
         Insert: {
           id?: string;
           name: string;
-          role: string;
+          role?: string | null;
           city: string;
           status: WorkerStatus;
           preferred_shifts?: ShiftType[];
@@ -55,7 +55,7 @@ export type Database = {
         Update: {
           id?: string;
           name?: string;
-          role?: string;
+          role?: string | null;
           city?: string;
           status?: WorkerStatus;
           preferred_shifts?: ShiftType[];

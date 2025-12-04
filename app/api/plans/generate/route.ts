@@ -564,12 +564,15 @@ Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id
       workers: workerRows.map((worker) => ({
         id: worker.id,
         name: worker.name,
-        role: worker.role,
+        role: worker.role ?? "",
         city: worker.city,
         status: worker.status,
-        preferredShifts: worker.preferred_shifts,
-        hoursPlanned: worker.hours_planned,
-        hoursCompleted: worker.hours_completed,
+        preferredShifts:
+          worker.preferred_shifts && worker.preferred_shifts.length > 0
+            ? worker.preferred_shifts
+            : ["day", "night"],
+        hoursPlanned: worker.hours_planned ?? 0,
+        hoursCompleted: worker.hours_completed ?? 0,
       })),
       preferences: sanitizedPreferences,
     };
