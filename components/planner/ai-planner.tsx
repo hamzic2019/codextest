@@ -737,9 +737,24 @@ export function PlannerWizard() {
       const wasClamped = selectedWorkers.some(
         (worker) => worker.days !== clampRequestedDays(worker.days, daysInMonth)
       );
+      const notices: string[] = [];
       if (wasClamped) {
-        setSanitizationNotice(t("planner.daysClamped", { max: daysInMonth }));
+        notices.push(t("planner.daysClamped", { max: daysInMonth }));
       }
+
+      const totalSlots = daysInMonth * 2;
+      const requested = clampedWorkers.reduce((sum, worker) => sum + worker.days, 0);
+      const requestedDay = clampedWorkers.reduce(
+        (sum, worker) => sum + worker.days * (worker.ratio / 100),
+        0
+      );
+      const requestedNight = requested - requestedDay;
+      notices.push(
+        `Traženo ${requested} smjena (dnevne ≈ ${Math.round(requestedDay)}, noćne ≈ ${Math.round(
+          requestedNight
+        )}); dostupno ${totalSlots} slotova (${daysInMonth} dnevnih / ${daysInMonth} noćnih).`
+      );
+      setSanitizationNotice(notices.join(" · "));
 
       const response = await fetch("/api/plans/generate", {
         method: "POST",
@@ -996,6 +1011,9 @@ export function PlannerWizard() {
                       background: `linear-gradient(90deg, #0ea5e9 ${item.ratio}%, #e2e8f0 ${item.ratio}%)`,
                     }}
                   />
+                  <p className="text-[11px] text-slate-500">
+                    0% = samo noćne, 100% = samo dnevne.
+                  </p>
                   <div className="grid gap-3 sm:grid-cols-2">
                     <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
                       <Clock className="h-4 w-4" />
@@ -1020,6 +1038,9 @@ export function PlannerWizard() {
                       <span className="text-sm font-bold text-slate-900">{item.ratio}%</span>
                     </div>
                   </div>
+                  <p className="text-[11px] text-slate-500">
+                    Broj dana je želja; ako nema dovoljno pokrivenosti, planer može dodati koji dan više.
+                  </p>
                 </div>
               </div>
             );
