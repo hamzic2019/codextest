@@ -3,8 +3,6 @@ import { createServiceSupabaseClient } from "@/lib/supabase/server";
 import { DEFAULT_OPENAI_MODEL, getOpenAIClient } from "@/lib/openai";
 import type { PlanAssignment, WorkerPreference } from "@/types";
 
-<<<<<<< HEAD
-=======
 type SanitizedPreference = WorkerPreference & {
   targetDays: number;
   priority: boolean;
@@ -25,7 +23,6 @@ type WorkerState = {
   streak: number;
 };
 
->>>>>>> backend
 type OpenAIPlanItem = {
   date: string;
   dayWorkerId?: string | null;
@@ -33,33 +30,13 @@ type OpenAIPlanItem = {
   note?: string | null;
 };
 
-<<<<<<< HEAD
-=======
 const MAX_CONSECUTIVE_DAYS = 4;
 const MAX_CONSECUTIVE_NIGHTS = 3;
 
->>>>>>> backend
 function toDateKey(year: number, month: number, day: number) {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
-<<<<<<< HEAD
-function extractPlanAssignments(
-  rawPlan: OpenAIPlanItem[],
-  year: number,
-  month: number,
-  daysInMonth: number
-): PlanAssignment[] {
-  const byDate = new Map<string, OpenAIPlanItem>();
-  rawPlan.forEach((item) => {
-    if (item.date) {
-      byDate.set(item.date, item);
-    }
-  });
-
-  const assignments: PlanAssignment[] = [];
-
-=======
 function isWeekend(year: number, monthZeroBased: number, day: number) {
   const weekday = new Date(year, monthZeroBased, day).getDay(); // 0=Sun
   return weekday === 0 || weekday === 6;
@@ -98,7 +75,6 @@ function extractPlanAssignments(rawPlan: OpenAIPlanItem[], year: number, month: 
   });
 
   const assignments: PlanAssignment[] = [];
->>>>>>> backend
   for (let day = 1; day <= daysInMonth; day++) {
     const dateKey = toDateKey(year, month, day);
     const item = byDate.get(dateKey);
@@ -112,35 +88,6 @@ function extractPlanAssignments(rawPlan: OpenAIPlanItem[], year: number, month: 
             note?: string | null;
           })
         : undefined;
-<<<<<<< HEAD
-    const dayWorker =
-      item?.dayWorkerId ??
-      legacy?.day_worker_id ??
-      legacy?.day ??
-      null;
-    const nightWorker =
-      item?.nightWorkerId ??
-      legacy?.night_worker_id ??
-      legacy?.night ??
-      null;
-    const note = item?.note ?? legacy?.note ?? null;
-
-    assignments.push({
-      date: dateKey,
-      shiftType: "day",
-      workerId: dayWorker ?? null,
-      note,
-    });
-    assignments.push({
-      date: dateKey,
-      shiftType: "night",
-      workerId: nightWorker ?? null,
-      note,
-    });
-  }
-
-  return assignments;
-=======
     const dayWorker = item?.dayWorkerId ?? legacy?.day_worker_id ?? legacy?.day ?? null;
     const nightWorker = item?.nightWorkerId ?? legacy?.night_worker_id ?? legacy?.night ?? null;
     const note = item?.note ?? legacy?.note ?? null;
@@ -177,13 +124,7 @@ function applyAssignment(state: WorkerState, day: number, shift: "day" | "night"
   return next;
 }
 
-function isValidCandidate(
-  worker: WorkerState,
-  day: number,
-  shift: "day" | "night",
-  existingDay: string | null | undefined,
-  maxPerWorker: number
-) {
+function isValidCandidate(worker: WorkerState, day: number, shift: "day" | "night", existingDay: string | null | undefined, maxPerWorker: number) {
   if (worker.assigned >= maxPerWorker) return false;
   if (existingDay && existingDay === worker.id) return false;
   if (shift === "day" && !worker.allowDay) return false;
@@ -193,13 +134,7 @@ function isValidCandidate(
   return true;
 }
 
-function scoreCandidate(
-  worker: WorkerState,
-  day: number,
-  shift: "day" | "night",
-  daysInMonth: number,
-  weekend: boolean
-) {
+function scoreCandidate(worker: WorkerState, day: number, shift: "day" | "night", daysInMonth: number, weekend: boolean) {
   const remaining = worker.targetDays - worker.assigned;
   const priorityBoost = worker.priority ? 3 : 1;
   const balancePref = shift === "day" ? worker.ratio : 100 - worker.ratio; // 0..100
@@ -228,25 +163,13 @@ function mapAssignmentsToSchedule(assignments: PlanAssignment[]) {
   return schedule;
 }
 
-function isAssignmentValid(
-  worker: WorkerState,
-  day: number,
-  shift: "day" | "night",
-  entry: { day?: string | null; night?: string | null },
-  maxPerWorker: number
-) {
+function isAssignmentValid(worker: WorkerState, day: number, shift: "day" | "night", entry: { day?: string | null; night?: string | null }, maxPerWorker: number) {
   if (shift === "day" && entry.day && entry.day !== worker.id) return false;
   if (shift === "night" && entry.night && entry.night !== worker.id) return false;
   return isValidCandidate(worker, day, shift, entry.day, maxPerWorker);
 }
 
-function buildSchedule(
-  preferences: SanitizedPreference[],
-  baseAssignments: PlanAssignment[],
-  year: number,
-  monthZeroBased: number,
-  daysInMonth: number
-) {
+function buildSchedule(preferences: SanitizedPreference[], baseAssignments: PlanAssignment[], year: number, monthZeroBased: number, daysInMonth: number) {
   const totalSlots = daysInMonth * 2;
   const normalizedPrefs = normalizeTargets(preferences, totalSlots);
   const schedule = baseAssignments.length > 0 ? mapAssignmentsToSchedule(baseAssignments) : buildEmptySchedule(daysInMonth);
@@ -361,36 +284,24 @@ function buildSchedule(
   return { assignments: result, stateById };
 }
 
-function formatMeta(
-  preferences: SanitizedPreference[],
-  stateById: Map<string, WorkerState>,
-  daysInMonth: number,
-  notes: string[]
-) {
+function formatMeta(preferences: SanitizedPreference[], stateById: Map<string, WorkerState>, daysInMonth: number, notes: string[]) {
   const perWorker = preferences.map((pref) => {
     const state = stateById.get(pref.workerId);
     const assigned = state?.assigned ?? 0;
     const shortfall = pref.targetDays - assigned;
     if (shortfall > 0 && pref.priority) {
-      notes.push(
-        `${pref.workerId} (prioritet) tražio ${pref.targetDays}, dodijeljeno ${assigned} zbog ograničenja.`
-      );
+      notes.push(`${pref.workerId} (prioritet) tražio ${pref.targetDays}, dodijeljeno ${assigned} zbog ograničenja.`);
     }
     return `${pref.workerId}: ${assigned}/${pref.targetDays}`;
   });
   return `Plan za ${daysInMonth} dana. Pokrivenost: ${perWorker.join("; ")}. ${notes.join(" ")}`.trim();
->>>>>>> backend
 }
 
 export async function POST(request: Request) {
   try {
     const payload = await request.json();
     const patientId = String(payload.patientId ?? "").trim();
-<<<<<<< HEAD
-    const workerPreferences = Array.isArray(payload.workerPreferences)
-=======
     const workerPreferencesRaw = Array.isArray(payload.workerPreferences)
->>>>>>> backend
       ? (payload.workerPreferences as WorkerPreference[])
       : [];
     const month = Number(payload.month);
@@ -398,10 +309,7 @@ export async function POST(request: Request) {
     const prompt = payload.prompt ? String(payload.prompt) : "";
 
     if (!patientId || Number.isNaN(month) || Number.isNaN(year)) {
-      return NextResponse.json(
-        { error: "patientId, month i year su obavezni." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "patientId, month i year su obavezni." }, { status: 400 });
     }
 
     const supabase = createServiceSupabaseClient();
@@ -416,42 +324,19 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Pacijent nije pronađen." }, { status: 404 });
     }
 
-<<<<<<< HEAD
-    const workerIds = workerPreferences.map((pref) => pref.workerId);
-=======
     const workerIds = workerPreferencesRaw.map((pref) => pref.workerId);
->>>>>>> backend
     if (workerIds.length === 0) {
-      return NextResponse.json(
-        { error: "Dodajte bar jednog radnika prije generisanja." },
-        { status: 400 }
-      );
+      return NextResponse.json({ error: "Dodajte bar jednog radnika prije generisanja." }, { status: 400 });
     }
 
-    const { data: workerRows, error: workersError } = await supabase
-      .from("workers")
-      .select("*")
-      .in("id", workerIds);
+    const { data: workerRows, error: workersError } = await supabase.from("workers").select("*").in("id", workerIds);
 
     if (workersError) throw workersError;
     if (!workerRows || workerRows.length === 0) {
-      return NextResponse.json(
-        { error: "Radnici nisu pronađeni u bazi." },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Radnici nisu pronađeni u bazi." }, { status: 404 });
     }
 
     const daysInMonth = new Date(year, month, 0).getDate();
-<<<<<<< HEAD
-    const openai = getOpenAIClient();
-
-    const systemPrompt = `
-Ti si planer smjena za njegu. Moraš poštovati:
-- Nema 24h u komadu: isti radnik ne može dan pa noć isti dan.
-- Nakon noćne mora imati cijeli dan pauze prije nove dnevne.
-- Poštuj preferencije (day/night), prioritetne radnike guraš češće.
-- Koristi samo workerId iz liste. Ako nema radnika, ostavi null.
-=======
     const sanitizedPreferences = sanitizePreferences(workerPreferencesRaw, daysInMonth);
     const monthZeroBased = month - 1;
     const totalSlots = daysInMonth * 2;
@@ -466,7 +351,6 @@ Moraš poštovati:
 - Poštuj preferencije (day/night) i ratio; prioritetni radnici imaju prednost kod popune.
 - Ne planiraj "u cugu": izbjegavaj serije duže od 4-5 dana istog radnika; miješaj radnike kroz mjesec, uključujući vikende.
 - Koristi samo workerId iz liste. Ako baš nema radnika, ostavi null, ali pokušaj popuniti sve smjene.
->>>>>>> backend
 Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id|null>", "nightWorkerId": "<id|null>", "note": "..." }].
 `;
 
@@ -492,52 +376,6 @@ Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id
         hoursPlanned: worker.hours_planned,
         hoursCompleted: worker.hours_completed,
       })),
-<<<<<<< HEAD
-      preferences: workerPreferences,
-    };
-
-    const completion = await openai.chat.completions.create({
-      model: DEFAULT_OPENAI_MODEL,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: systemPrompt.trim() },
-        {
-          role: "user",
-          content: `Generiši optimalnu rotaciju. Ulazni podaci: ${JSON.stringify(userPayload)}`,
-        },
-      ],
-      temperature: 0.2,
-    });
-
-    const content = completion.choices[0]?.message?.content;
-    if (!content) {
-      throw new Error("OpenAI nije vratio sadržaj.");
-    }
-
-    let parsed: unknown;
-    try {
-      parsed = JSON.parse(content);
-    } catch (error) {
-      console.error("Parse OpenAI JSON", error, content);
-      throw new Error("OpenAI je vratio nevalidan JSON.");
-    }
-
-    if (!parsed || typeof parsed !== "object") {
-      throw new Error("OpenAI je vratio nevalidan JSON.");
-    }
-
-    const parsedObj = parsed as Record<string, unknown>;
-    const rawPlanSource =
-      parsedObj.plan ?? parsedObj.assignments ?? parsedObj.days ?? [];
-    const rawPlan: OpenAIPlanItem[] = Array.isArray(rawPlanSource)
-      ? (rawPlanSource as OpenAIPlanItem[])
-      : [];
-    const assignments = extractPlanAssignments(rawPlan, year, month, daysInMonth);
-    const summary =
-      typeof parsedObj.summary === "string" ? parsedObj.summary : null;
-
-    return NextResponse.json({ data: { assignments, summary } });
-=======
       preferences: sanitizedPreferences,
     };
 
@@ -548,10 +386,7 @@ Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id
         response_format: { type: "json_object" },
         messages: [
           { role: "system", content: systemPrompt.trim() },
-          {
-            role: "user",
-            content: `Generiši optimalnu rotaciju. Ulazni podaci: ${JSON.stringify(userPayload)}`,
-          },
+          { role: "user", content: `Generiši optimalnu rotaciju. Ulazni podaci: ${JSON.stringify(userPayload)}` },
         ],
         temperature: 0.2,
       });
@@ -560,9 +395,7 @@ Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id
       if (content) {
         const parsed = JSON.parse(content) as Record<string, unknown>;
         const rawPlanSource = parsed.plan ?? parsed.assignments ?? parsed.days ?? [];
-        const rawPlan: OpenAIPlanItem[] = Array.isArray(rawPlanSource)
-          ? (rawPlanSource as OpenAIPlanItem[])
-          : [];
+        const rawPlan: OpenAIPlanItem[] = Array.isArray(rawPlanSource) ? (rawPlanSource as OpenAIPlanItem[]) : [];
         aiAssignments = extractPlanAssignments(rawPlan, year, month, daysInMonth);
       }
     } catch (error) {
@@ -586,12 +419,8 @@ Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id
     const summary = formatMeta(sanitizedPreferences, stateById, daysInMonth, notes);
 
     return NextResponse.json({ data: { assignments: finalAssignments, summary } });
->>>>>>> backend
   } catch (error) {
     console.error("POST /api/plans/generate error", error);
-    return NextResponse.json(
-      { error: "Greška pri generisanju plana." },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Greška pri generisanju plana." }, { status: 500 });
   }
 }
