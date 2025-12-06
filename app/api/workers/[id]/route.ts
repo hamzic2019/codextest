@@ -126,6 +126,14 @@ export async function DELETE(_request: Request, context: RouteContext) {
   try {
     const { id } = await context.params;
     const supabase = createServiceSupabaseClient();
+    // Unassign the worker from any plan entries before deleting to avoid FK violations.
+    const { error: unassignError } = await supabase
+      .from("plan_assignments")
+      .update({ worker_id: null })
+      .eq("worker_id", id);
+
+    if (unassignError) throw unassignError;
+
     const { error } = await supabase.from("workers").delete().eq("id", id);
 
     if (error) throw error;

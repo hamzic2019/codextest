@@ -41,7 +41,7 @@ create table if not exists public.plan_assignments (
   plan_id uuid not null references public.plans(id) on delete cascade,
   date date not null,
   shift_type text not null check (shift_type in ('day', 'night')),
-  worker_id uuid references public.workers(id),
+  worker_id uuid references public.workers(id) on delete set null,
   note text,
   created_at timestamptz not null default now()
 );

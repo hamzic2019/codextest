@@ -161,6 +161,10 @@ const translations = {
     "planner.worker.focusNight": "Noćne {percent}%",
     "planner.worker.allowDay": "Dnevne",
     "planner.worker.allowNight": "Noćne",
+    "planner.lockShift": "Zaključaj smjenu",
+    "planner.unlockShift": "Otključaj smjenu",
+    "planner.lockedLabel": "Zaključano",
+    "planner.unsavedChanges": "Promjene nisu sačuvane — klikni Spasi plan",
     "planner.promptLabel": "Prompt",
     "planner.promptPlaceholder":
       "Sažet opis: rotiraj noćne na 2-3 dana, Maja dnevne, bez preklopa...",
@@ -356,6 +360,10 @@ const translations = {
     "planner.worker.focusNight": "Night {percent}%",
     "planner.worker.allowDay": "Day",
     "planner.worker.allowNight": "Night",
+    "planner.lockShift": "Lock shift",
+    "planner.unlockShift": "Unlock shift",
+    "planner.lockedLabel": "Locked",
+    "planner.unsavedChanges": "Unsaved changes — click Save plan",
     "planner.promptLabel": "Prompt",
     "planner.promptPlaceholder":
       "Short prompt: rotate nights every 2-3 days, Maja day shifts, avoid overlaps...",
@@ -551,6 +559,10 @@ const translations = {
     "planner.worker.focusNight": "Nacht {percent}%",
     "planner.worker.allowDay": "Tag",
     "planner.worker.allowNight": "Nacht",
+    "planner.lockShift": "Schicht sperren",
+    "planner.unlockShift": "Schicht entsperren",
+    "planner.lockedLabel": "Gesperrt",
+    "planner.unsavedChanges": "Änderungen nicht gespeichert — klicke \"Plan speichern\"",
     "planner.promptLabel": "Prompt",
     "planner.promptPlaceholder":
       "Kurzbeschreibung: Nachtdienste alle 2-3 Tage rotieren, Maja Tagdienste, keine Überschneidungen...",

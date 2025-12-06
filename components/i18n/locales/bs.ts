@@ -151,6 +151,10 @@ const translations = {
   "planner.worker.focusNight": "Noćne {percent}%",
   "planner.worker.allowDay": "Dnevne",
   "planner.worker.allowNight": "Noćne",
+  "planner.lockShift": "Zaključaj smjenu",
+  "planner.unlockShift": "Otključaj smjenu",
+  "planner.lockedLabel": "Zaključano",
+  "planner.unsavedChanges": "Promjene nisu sačuvane — klikni Spasi plan",
   "planner.promptLabel": "Prompt",
   "planner.promptPlaceholder":
     "Sažet opis: rotiraj noćne na 2-3 dana, Maja dnevne, bez preklopa...",

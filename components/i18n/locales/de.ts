@@ -151,6 +151,10 @@ const translations = {
   "planner.worker.focusNight": "Nacht {percent}%",
   "planner.worker.allowDay": "Tag",
   "planner.worker.allowNight": "Nacht",
+  "planner.lockShift": "Schicht sperren",
+  "planner.unlockShift": "Schicht entsperren",
+  "planner.lockedLabel": "Gesperrt",
+  "planner.unsavedChanges": "Änderungen nicht gespeichert — klicke \"Plan speichern\"",
   "planner.promptLabel": "Prompt",
   "planner.promptPlaceholder":
     "Kurzbeschreibung: Nachtdienste alle 2-3 Tage rotieren, Maja Tagdienste, keine Überschneidungen...",

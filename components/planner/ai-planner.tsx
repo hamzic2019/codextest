@@ -12,6 +12,8 @@ import {
   Sparkles,
   Star,
   Sun,
+  Lock,
+  Unlock,
   UserRoundSearch,
   X,
 } from "lucide-react";
@@ -39,6 +41,11 @@ type PreviewRow = {
   night: string;
   isToday: boolean;
 };
+
+type ShiftLockState = Record<string, Record<ShiftType, boolean>>;
+
+const SHIFT_DAY_START_HOUR = 8;
+const SHIFT_NIGHT_START_HOUR = 20;
 
 const MONTH_LABELS: Record<Language, string[]> = {
   bs: [
@@ -302,16 +309,23 @@ function ShiftDropdownCell({
   shift,
   availableWorkers,
   selectedWorker,
+  locked,
+  lockDisabled,
   onSelect,
+  onToggleLock,
 }: {
   shift: ShiftType;
   availableWorkers: Worker[];
   selectedWorker?: Worker;
+  locked: boolean;
+  lockDisabled: boolean;
   onSelect: (workerId: string) => void;
+  onToggleLock: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const wrapperRef = useRef<HTMLDivElement>(null);
   const { t } = useTranslations();
+  const lockLabel = locked ? t("planner.unlockShift") : t("planner.lockShift");
 
   useEffect(() => {
     if (!open) return;
@@ -326,26 +340,58 @@ function ShiftDropdownCell({
 
   return (
     <div ref={wrapperRef} className="relative">
-      <button
-        type="button"
-        className="flex w-full flex-col items-start gap-1 text-left text-slate-500 transition hover:text-slate-700 focus:outline-none"
-        onClick={(event) => {
-          event.stopPropagation();
-          setOpen((prev) => !prev);
-        }}
+      <div
+        className={`flex w-full items-center gap-3 rounded-xl border border-transparent px-2 py-1 text-left text-slate-500 transition ${
+          locked ? "opacity-60 bg-slate-50" : "hover:bg-slate-50/60"
+        }`}
       >
-        <span
-          className={`text-base font-semibold ${
-            selectedWorker ? "text-slate-900" : "text-slate-400"
-          }`}
+        <button
+          type="button"
+          aria-label={lockLabel}
+          title={lockLabel}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleLock();
+            setOpen(false);
+          }}
+          className={`inline-flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-full border text-slate-500 transition ${
+            locked
+              ? "border-amber-200 bg-amber-50 text-amber-700 hover:border-amber-300"
+              : "border-slate-200 bg-white hover:border-slate-300 hover:bg-slate-50"
+          } ${lockDisabled ? "pointer-events-none opacity-60" : ""}`}
+          disabled={lockDisabled}
         >
-          {selectedWorker?.name ?? "—"}
-        </span>
-        <span className="sr-only">
-          {shift === "day" ? t("planner.shift.dayLabel") : t("planner.shift.nightLabel")}
-        </span>
-      </button>
-      {open && (
+          {locked ? <Lock className="h-4 w-4" aria-hidden /> : <Unlock className="h-4 w-4" aria-hidden />}
+        </button>
+        <button
+          type="button"
+          className={`flex min-w-0 flex-1 flex-col items-start gap-0.5 rounded-lg border border-transparent px-2 py-1 text-left ${
+            locked ? "cursor-not-allowed text-slate-400" : "text-slate-500 hover:text-slate-700"
+          }`}
+          onClick={(event) => {
+            event.stopPropagation();
+            if (locked) return;
+            setOpen((prev) => !prev);
+          }}
+        >
+          <span
+            className={`text-base font-semibold ${
+              selectedWorker ? "text-slate-900" : "text-slate-400"
+            }`}
+          >
+            {selectedWorker?.name ?? "—"}
+          </span>
+          {locked ? (
+            <span className="text-[11px] uppercase tracking-[0.2em] text-amber-700">
+              {t("planner.lockedLabel")}
+            </span>
+          ) : null}
+          <span className="sr-only">
+            {shift === "day" ? t("planner.shift.dayLabel") : t("planner.shift.nightLabel")}
+          </span>
+        </button>
+      </div>
+      {open && !locked && (
         <div className="absolute left-0 right-0 z-30 mt-2 max-h-52 overflow-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-[0_25px_60px_rgba(15,23,42,0.2)]">
           {availableWorkers.length === 0 ? (
             <div className="px-3 py-2 text-[13px] text-slate-500">
@@ -476,6 +522,38 @@ function clampRequestedDays(days: number, daysInMonth: number) {
   return Math.min(days, daysInMonth);
 }
 
+function buildDefaultLocks(
+  now: Date,
+  year: number,
+  monthZeroBased: number,
+  daysInMonth: number
+): ShiftLockState {
+  const currentYear = now.getFullYear();
+  const currentMonth = now.getMonth();
+  const currentHour = now.getHours();
+  const isPastMonth =
+    year < currentYear || (year === currentYear && monthZeroBased < currentMonth);
+  const isCurrentMonth = year === currentYear && monthZeroBased === currentMonth;
+
+  if (!isCurrentMonth && !isPastMonth) return {};
+
+  const todayDay = now.getDate();
+  const locks: ShiftLockState = {};
+
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateKey = toDateKey(year, monthZeroBased, day);
+    const isPastDay = isPastMonth || (isCurrentMonth && day < todayDay);
+    const isToday = isCurrentMonth && day === todayDay;
+    const lockDay =
+      isPastDay || (isToday && currentHour >= SHIFT_DAY_START_HOUR);
+    const lockNight =
+      isPastDay || (isToday && currentHour >= SHIFT_NIGHT_START_HOUR);
+    locks[dateKey] = { day: lockDay, night: lockNight };
+  }
+
+  return locks;
+}
+
 export function PlannerWizard() {
   const { t, language } = useTranslations();
   const [patients, setPatients] = useState<Patient[]>([]);
@@ -493,6 +571,10 @@ export function PlannerWizard() {
     () => `${todayDate.getDate()}. ${plannerMonthNames[todayDate.getMonth()]}`,
     [plannerMonthNames, todayDate]
   );
+  const todayStart = useMemo(
+    () => new Date(todayDate.getFullYear(), todayDate.getMonth(), todayDate.getDate()),
+    [todayDate]
+  );
   const availablePlanYears = useMemo(() => {
     const currentYear = new Date().getFullYear();
     return Array.from({ length: 4 }, (_, index) => currentYear + index);
@@ -507,6 +589,7 @@ export function PlannerWizard() {
   const [assignments, setAssignments] = useState<
     Record<string, Record<ShiftType, string | null>>
   >({});
+  const [shiftLocks, setShiftLocks] = useState<ShiftLockState>({});
   const [generatedSummary, setGeneratedSummary] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -515,6 +598,7 @@ export function PlannerWizard() {
   const [isLoadingData, setIsLoadingData] = useState(true);
   const [isLoadingPlan, setIsLoadingPlan] = useState(false);
   const [sanitizationNotice, setSanitizationNotice] = useState<string | null>(null);
+  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
 
   const statusLabels = useMemo(
     () => ({
@@ -628,6 +712,10 @@ export function PlannerWizard() {
 
     const controller = new AbortController();
     const loadPlan = async () => {
+      const now = new Date();
+      const daysThisMonth = new Date(planYear, planMonth + 1, 0).getDate();
+      const defaultLocks = buildDefaultLocks(now, planYear, planMonth, daysThisMonth);
+      setShiftLocks(defaultLocks);
       setIsLoadingPlan(true);
       setStatusMessage(null);
       setErrorMessage(null);
@@ -650,6 +738,8 @@ export function PlannerWizard() {
           setAssignments({});
           setGeneratedSummary(null);
           setPromptText("");
+          setShiftLocks(defaultLocks);
+          setHasUnsavedChanges(false);
           return;
         }
 
@@ -657,6 +747,8 @@ export function PlannerWizard() {
         setAssignments(assignmentsListToMap(planAssignments));
         setGeneratedSummary(plan.summary ?? null);
         setPromptText(plan.prompt ?? "");
+        setShiftLocks(defaultLocks);
+        setHasUnsavedChanges(false);
 
         if (planAssignments.length > 0) {
           setSelectedWorkers((prev) => {
@@ -681,6 +773,8 @@ export function PlannerWizard() {
         setGeneratedSummary(null);
         setPromptText("");
         setErrorMessage(t("planner.loadError"));
+        setShiftLocks(defaultLocks);
+        setHasUnsavedChanges(false);
       } finally {
         if (!controller.signal.aborted) {
           setIsLoadingPlan(false);
@@ -818,11 +912,27 @@ export function PlannerWizard() {
   ]);
 
   const assignWorker = (dateKey: string, shift: ShiftType, workerId: string) => {
+    const lockState = shiftLocks[dateKey];
+    if (lockState?.[shift]) return;
     setStatusMessage(null);
+    setHasUnsavedChanges(true);
     setAssignments((prev) => ({
       ...prev,
-      [dateKey]: { ...prev[dateKey], [shift]: workerId },
+      [dateKey]: { ...{ day: null, night: null }, ...prev[dateKey], [shift]: workerId },
     }));
+  };
+
+  const toggleLock = (dateKey: string, shift: ShiftType) => {
+    const dateValue = new Date(dateKey);
+    if (dateValue < todayStart) return;
+    setShiftLocks((prev) => {
+      const current = prev[dateKey] ?? { day: false, night: false };
+      setHasUnsavedChanges(true);
+      return {
+        ...prev,
+        [dateKey]: { ...current, [shift]: !current[shift] },
+      };
+    });
   };
 
   const handleGenerate = async () => {
@@ -872,6 +982,12 @@ export function PlannerWizard() {
           month: planMonth + 1,
           year: planYear,
           prompt: promptText,
+          currentAssignments: mapAssignmentsToArray(assignments, planYear, planMonth, daysInMonth),
+          lockedShifts: Object.entries(shiftLocks).flatMap(([date, shifts]) =>
+            (["day", "night"] as const)
+              .filter((shift) => shifts[shift])
+              .map((shift) => ({ date, shiftType: shift }))
+          ),
         }),
       });
 
@@ -881,9 +997,28 @@ export function PlannerWizard() {
       }
 
       const assignmentList: PlanAssignment[] = json.data?.assignments ?? [];
-      setAssignments(assignmentsListToMap(assignmentList));
+      const generatedAssignments = assignmentsListToMap(assignmentList);
+      const mergedAssignments: Record<string, Record<ShiftType, string | null>> = {
+        ...generatedAssignments,
+      };
+
+      Object.entries(shiftLocks).forEach(([dateKey, shiftState]) => {
+        const existing = assignments[dateKey];
+        if (!mergedAssignments[dateKey]) {
+          mergedAssignments[dateKey] = { day: null, night: null };
+        }
+        if (shiftState.day) {
+          mergedAssignments[dateKey].day = existing?.day ?? null;
+        }
+        if (shiftState.night) {
+          mergedAssignments[dateKey].night = existing?.night ?? null;
+        }
+      });
+
+      setAssignments(mergedAssignments);
       setGeneratedSummary(json.data?.summary ?? null);
       setStatusMessage(t("planner.generateSuccess"));
+      setHasUnsavedChanges(true);
     } catch (error) {
       console.error(error);
       setErrorMessage(t("planner.generateError"));
@@ -929,6 +1064,7 @@ export function PlannerWizard() {
       }
 
       setStatusMessage(t("planner.saveSuccess"));
+      setHasUnsavedChanges(false);
     } catch (error) {
       console.error(error);
       setErrorMessage(t("planner.saveError"));
@@ -982,6 +1118,11 @@ export function PlannerWizard() {
     <Card className="space-y-4">
       <div className="flex flex-wrap items-center gap-3">
         <h2 className="text-xl font-semibold text-slate-900">{t("planner.title")}</h2>
+        {hasUnsavedChanges ? (
+          <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+            {t("planner.unsavedChanges")}
+          </span>
+        ) : null}
         {statusMessage ? (
           <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
             {statusMessage}
@@ -1278,12 +1419,6 @@ export function PlannerWizard() {
           </div>
         </div>
 
-        {generatedSummary ? (
-          <div className="rounded-xl border border-sky-100 bg-sky-50/70 px-4 py-3 text-sm text-slate-700">
-            {generatedSummary}
-          </div>
-        ) : null}
-
         <div className="overflow-hidden rounded-2xl border border-slate-100">
           <div className="grid grid-cols-[1.3fr_1fr_1fr] bg-slate-50 px-4 py-3 text-[11px] uppercase tracking-[0.3em] text-slate-500">
             <span>{t("planner.preview.date")}</span>
@@ -1304,29 +1439,43 @@ export function PlannerWizard() {
             {previewRows.map((row) => {
               const assignedDayId = assignments[row.dateKey]?.day;
               const assignedNightId = assignments[row.dateKey]?.night;
+              const lockState = shiftLocks[row.dateKey] ?? { day: false, night: false };
+              const dayLocked = lockState.day;
+              const nightLocked = lockState.night;
+              const rowLockedClass =
+                dayLocked && nightLocked ? "ring-1 ring-amber-200 bg-amber-50/70" : "";
+              const isPastDate = new Date(row.dateKey) < todayStart;
 
               return (
                 <div
                   key={row.dateKey}
                   className={`grid grid-cols-[1.3fr_1fr_1fr] px-4 py-3 text-sm text-slate-700 transition-colors hover:bg-slate-50 ${
                     row.isToday ? "bg-sky-50 text-slate-900 ring-1 ring-sky-200" : ""
-                  }`}
+                  } ${rowLockedClass}`}
                 >
-                  <span className="flex flex-col gap-0.5 text-slate-900">
+                  <div className="flex flex-col gap-0.5 text-slate-900">
                     <span className="text-base font-semibold leading-tight">
                       {row.dayLabel}
                     </span>
                     <span className="text-xs uppercase tracking-[0.3em] text-slate-500">
                       {row.monthLabel}
                     </span>
-                  </span>
+                    {rowLockedClass ? (
+                      <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-[0.16em] text-amber-700">
+                        <Lock className="h-3 w-3" aria-hidden /> {t("planner.lockedLabel")}
+                      </span>
+                    ) : null}
+                  </div>
                   <ShiftDropdownCell
                     shift="day"
                     availableWorkers={availableWorkersByShift.day}
                     selectedWorker={
                       assignedDayId ? workerById.get(assignedDayId) : undefined
                     }
+                    locked={dayLocked}
+                    lockDisabled={isPastDate}
                     onSelect={(workerId) => assignWorker(row.dateKey, "day", workerId)}
+                    onToggleLock={() => toggleLock(row.dateKey, "day")}
                   />
                   <ShiftDropdownCell
                     shift="night"
@@ -1334,7 +1483,10 @@ export function PlannerWizard() {
                     selectedWorker={
                       assignedNightId ? workerById.get(assignedNightId) : undefined
                     }
+                    locked={nightLocked}
+                    lockDisabled={isPastDate}
                     onSelect={(workerId) => assignWorker(row.dateKey, "night", workerId)}
+                    onToggleLock={() => toggleLock(row.dateKey, "night")}
                   />
                 </div>
               );

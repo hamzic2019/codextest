@@ -151,6 +151,10 @@ const translations = {
   "planner.worker.focusNight": "Night {percent}%",
   "planner.worker.allowDay": "Day",
   "planner.worker.allowNight": "Night",
+  "planner.lockShift": "Lock shift",
+  "planner.unlockShift": "Unlock shift",
+  "planner.lockedLabel": "Locked",
+  "planner.unsavedChanges": "Unsaved changes — click Save plan",
   "planner.promptLabel": "Prompt",
   "planner.promptPlaceholder":
     "Short prompt: rotate nights every 2-3 days, Maja day shifts, avoid overlaps...",

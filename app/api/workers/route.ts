@@ -103,3 +103,42 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export async function DELETE(request: Request) {
+  try {
+    const payload = await request.json();
+    const workerId = String(payload.workerId ?? "").trim();
+
+    if (!workerId) {
+      return NextResponse.json(
+        { error: "workerId je obavezan." },
+        { status: 400 }
+      );
+    }
+
+    const supabase = createServiceSupabaseClient();
+
+    // Odveži radnika iz planova prije brisanja da izbjegnemo FK probleme.
+    const { error: unassignError } = await supabase
+      .from("plan_assignments")
+      .update({ worker_id: null })
+      .eq("worker_id", workerId);
+
+    if (unassignError) throw unassignError;
+
+    const { error: deleteError } = await supabase
+      .from("workers")
+      .delete()
+      .eq("id", workerId);
+
+    if (deleteError) throw deleteError;
+
+    return NextResponse.json({ data: { success: true } });
+  } catch (error) {
+    console.error("DELETE /api/workers error", error);
+    return NextResponse.json(
+      { error: "Greška pri brisanju radnika." },
+      { status: 500 }
+    );
+  }
+}

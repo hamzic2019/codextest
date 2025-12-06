@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
 import { DEFAULT_OPENAI_MODEL, getOpenAIClient } from "@/lib/openai";
-import type { PlanAssignment, WorkerPreference } from "@/types";
+import type { PlanAssignment, ShiftType, WorkerPreference } from "@/types";
 
 type SanitizedPreference = WorkerPreference & {
   targetDays: number;
@@ -40,6 +40,8 @@ type OpenAIPlanItem = {
   nightWorkerId?: string | null;
   note?: string | null;
 };
+
+type LockedShift = { date: string; shiftType: ShiftType };
 
 const MAX_CONSECUTIVE_DAYS = 4;
 const MAX_CONSECUTIVE_NIGHTS = 3;
@@ -276,8 +278,10 @@ function isAssignmentValid(
 
 function buildSchedule(
   preferences: SanitizedPreference[],
-  baseAssignments: PlanAssignment[],
+  aiAssignments: PlanAssignment[],
+  lockedAssignments: PlanAssignment[],
   busyAssignments: PlanAssignment[],
+  lockedMap: Map<number, Partial<Record<ShiftType, boolean>>>,
   year: number,
   monthZeroBased: number,
   daysInMonth: number
@@ -290,7 +294,25 @@ function buildSchedule(
     const hardCap = Math.max(softCap + 4, pref.targetDays + 6);
     return { ...pref, targetDay, targetNight, softCap, hardCap };
   });
-  const schedule = baseAssignments.length > 0 ? mapAssignmentsToSchedule(baseAssignments) : buildEmptySchedule(daysInMonth);
+  const schedule = buildEmptySchedule(daysInMonth);
+
+  // Seed locked assignments first; they are immutable.
+  lockedAssignments.forEach((assignment) => {
+    const day = Number(assignment.date.split("-")[2]);
+    const entry = schedule.get(day) ?? {};
+    entry[assignment.shiftType] = assignment.workerId ?? null;
+    schedule.set(day, entry);
+  });
+
+  // Apply AI assignments if not locked.
+  aiAssignments.forEach((assignment) => {
+    const day = Number(assignment.date.split("-")[2]);
+    const locked = lockedMap.get(day);
+    if (locked?.[assignment.shiftType]) return;
+    const entry = schedule.get(day) ?? {};
+    entry[assignment.shiftType] = assignment.workerId ?? null;
+    schedule.set(day, entry);
+  });
 
   const busyByDay = new Map<number, Set<string>>();
   busyAssignments.forEach((assignment) => {
@@ -323,6 +345,7 @@ function buildSchedule(
   for (let day = 1; day <= daysInMonth; day++) {
     const entry = schedule.get(day) ?? { day: null, night: null };
     (["day", "night"] as const).forEach((shift) => {
+      if (lockedMap.get(day)?.[shift]) return;
       const workerId = entry[shift];
       if (!workerId) return;
       const worker = stateById.get(workerId);
@@ -347,6 +370,7 @@ function buildSchedule(
     const entry = schedule.get(day) ?? { day: null, night: null };
 
     (["day", "night"] as const).forEach((shift) => {
+      if (lockedMap.get(day)?.[shift]) return;
       if (shift === "day" && entry.day) return;
       if (shift === "night" && entry.night) return;
 
@@ -382,6 +406,7 @@ function buildSchedule(
     const busyWorkers = busyByDay.get(day);
 
     (["day", "night"] as const).forEach((shift) => {
+      if (lockedMap.get(day)?.[shift]) return;
       if (shift === "day" && entry.day) return;
       if (shift === "night" && entry.night) return;
 
@@ -472,6 +497,12 @@ export async function POST(request: Request) {
     const workerPreferencesRaw = Array.isArray(payload.workerPreferences)
       ? (payload.workerPreferences as WorkerPreference[])
       : [];
+    const currentAssignmentsRaw = Array.isArray(payload.currentAssignments)
+      ? (payload.currentAssignments as PlanAssignment[])
+      : [];
+    const lockedShiftsRaw = Array.isArray(payload.lockedShifts)
+      ? (payload.lockedShifts as LockedShift[])
+      : [];
     const month = Number(payload.month);
     const year = Number(payload.year);
     const prompt = payload.prompt ? String(payload.prompt) : "";
@@ -535,6 +566,18 @@ export async function POST(request: Request) {
     const sanitizedPreferences = sanitizePreferences(workerPreferencesRaw, daysInMonth);
     const monthZeroBased = month - 1;
     const totalSlots = daysInMonth * 2;
+    const lockedMap = new Map<number, Partial<Record<ShiftType, boolean>>>();
+    lockedShiftsRaw.forEach((item) => {
+      const day = Number(item.date.split("-")[2]);
+      if (Number.isNaN(day)) return;
+      const entry = lockedMap.get(day) ?? {};
+      entry[item.shiftType] = true;
+      lockedMap.set(day, entry);
+    });
+    const lockedAssignments = currentAssignmentsRaw.filter((assignment) => {
+      const day = Number(assignment.date.split("-")[2]);
+      return lockedMap.get(day)?.[assignment.shiftType];
+    });
 
     const openai = getOpenAIClient();
     const systemPrompt = `
@@ -613,7 +656,9 @@ Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id
     const { assignments: finalAssignments, stateById, normalizedPrefs } = buildSchedule(
       sanitizedPreferences,
       aiAssignments,
+      lockedAssignments,
       busyAssignments,
+      lockedMap,
       year,
       monthZeroBased,
       daysInMonth
