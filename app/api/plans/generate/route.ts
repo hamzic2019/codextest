@@ -72,75 +72,93 @@ function sanitizePreferences(preferences: WorkerPreference[], daysInMonth: numbe
 }
 
 function normalizeTargets(preferences: SanitizedPreference[], totalSlots: number): SanitizedPreference[] {
-  const requested = preferences.reduce((sum, pref) => sum + pref.targetDays, 0);
   if (preferences.length === 0) return preferences;
 
-  const distributeRemainder = (list: SanitizedPreference[], remaining: number, direction: "add" | "sub") => {
+  const capPref = (pref: SanitizedPreference) => ({
+    ...pref,
+    targetDays: Math.max(pref.priority ? 1 : 0, Math.min(pref.targetDays, totalSlots)),
+  });
+
+  const normalizeBucket = (
+    bucket: SanitizedPreference[],
+    targetTotal: number,
+    minPerItem: (pref: SanitizedPreference, bucketSize: number) => number
+  ) => {
+    if (bucket.length === 0) return bucket;
+    if (targetTotal <= 0) return bucket.map((pref) => ({ ...pref, targetDays: 0 }));
+
+    const requested = bucket.reduce((sum, pref) => sum + pref.targetDays, 0);
+
+    // Nothing requested: split evenly to cover slots.
+    if (requested === 0) {
+      const base = Math.floor(targetTotal / bucket.length);
+      const remainder = targetTotal - base * bucket.length;
+      return bucket.map((pref, index) => ({
+        ...pref,
+        targetDays: base + (index < remainder ? 1 : 0),
+      }));
+    }
+
+    const factor = targetTotal / requested;
+    const scaled = bucket.map((pref) => {
+      const minAllowed = Math.min(
+        targetTotal,
+        Math.max(minPerItem(pref, bucket.length), 0)
+      );
+      return {
+        ...pref,
+        targetDays: Math.max(minAllowed, Math.round(pref.targetDays * factor)),
+      };
+    });
+
+    let diff = targetTotal - scaled.reduce((sum, pref) => sum + pref.targetDays, 0);
+    if (diff === 0) return scaled;
+
+    const ordered = [...scaled].sort((a, b) => {
+      if (diff > 0) {
+        if (a.priority === b.priority) return a.targetDays - b.targetDays;
+        return a.priority ? -1 : 1;
+      }
+      if (a.priority === b.priority) return b.targetDays - a.targetDays;
+      return a.priority ? 1 : -1;
+    });
+
     let idx = 0;
-    // Avoid infinite loops by iterating with a safety counter.
-    let safety = 500;
-    while (remaining !== 0 && safety > 0) {
-      const pref = list[idx % list.length];
-      const minAllowed = pref.priority ? 1 : 0;
-      if (direction === "add") {
+    let safety = 1000;
+    while (diff !== 0 && safety > 0) {
+      const pref = ordered[idx % ordered.length];
+      const minAllowed = Math.min(
+        targetTotal,
+        Math.max(minPerItem(pref, ordered.length), 0)
+      );
+      if (diff > 0) {
         pref.targetDays += 1;
-        remaining -= 1;
-      } else if (direction === "sub" && pref.targetDays > minAllowed) {
+        diff -= 1;
+      } else if (pref.targetDays > minAllowed) {
         pref.targetDays -= 1;
-        remaining += 1; // remaining is negative
+        diff += 1;
       }
       idx += 1;
       safety -= 1;
     }
+
+    return ordered;
   };
 
-  // If nothing requested, split evenly.
-  if (requested === 0) {
-    const base = Math.floor(totalSlots / preferences.length);
-    const remainder = totalSlots - base * preferences.length;
-    return preferences.map((pref, index) => ({
-      ...pref,
-      targetDays: base + (index < remainder ? 1 : 0),
-    }));
-  }
+  const priority = preferences.filter((pref) => pref.priority).map(capPref);
+  const nonPriority = preferences.filter((pref) => !pref.priority).map(capPref);
 
-  const factor = totalSlots / requested;
-  const scaled = preferences.map((pref) => ({
-    ...pref,
-    targetDays: Math.max(pref.priority ? 1 : 0, Math.round(pref.targetDays * factor)),
-  }));
+  const priorityRequested = priority.reduce((sum, pref) => sum + pref.targetDays, 0);
+  const priorityTarget = Math.min(priorityRequested, totalSlots);
+  const normalizedPriority = normalizeBucket(priority, priorityTarget, (pref, size) =>
+    totalSlots >= size ? 1 : 0
+  );
 
-  const currentTotal = scaled.reduce((sum, pref) => sum + pref.targetDays, 0);
-  const diff = totalSlots - currentTotal;
+  const usedByPriority = normalizedPriority.reduce((sum, pref) => sum + pref.targetDays, 0);
+  const remainingSlots = Math.max(totalSlots - usedByPriority, 0);
+  const normalizedNonPriority = normalizeBucket(nonPriority, remainingSlots, () => 0);
 
-  // Adjust so the normalized total exactly matches the available slots.
-  if (diff > 0) {
-    const ordered = [...scaled].sort((a, b) => {
-      if (a.priority === b.priority) return a.targetDays - b.targetDays;
-      return a.priority ? -1 : 1;
-    });
-    distributeRemainder(ordered, diff, "add");
-    const finalTotal = ordered.reduce((sum, pref) => sum + pref.targetDays, 0);
-    if (finalTotal !== totalSlots && ordered[0]) {
-      ordered[0].targetDays += totalSlots - finalTotal;
-    }
-    return ordered;
-  }
-
-  if (diff < 0) {
-    const ordered = [...scaled].sort((a, b) => {
-      if (a.priority === b.priority) return b.targetDays - a.targetDays;
-      return a.priority ? 1 : -1;
-    });
-    distributeRemainder(ordered, diff, "sub");
-    const finalTotal = ordered.reduce((sum, pref) => sum + pref.targetDays, 0);
-    if (finalTotal !== totalSlots && ordered[0]) {
-      ordered[0].targetDays += totalSlots - finalTotal;
-    }
-    return ordered;
-  }
-
-  return scaled;
+  return [...normalizedPriority, ...normalizedNonPriority];
 }
 
 function extractPlanAssignments(rawPlan: OpenAIPlanItem[], year: number, month: number, daysInMonth: number): PlanAssignment[] {
@@ -175,7 +193,7 @@ function extractPlanAssignments(rawPlan: OpenAIPlanItem[], year: number, month: 
 function isRestOk(state: WorkerState, day: number, shift: "day" | "night") {
   if (!state.lastDay) return true;
   if (state.lastDay === day && state.lastType && state.lastType !== shift) return false; // no 24h
-  if (state.lastType === "night" && state.lastDay === day - 1 && shift === "day") return false; // rest after night
+  if (state.lastType === "night" && state.lastDay === day - 1 && shift === "day") return false; // rest after night; night->day next day forbidden
   return true;
 }
 
@@ -229,16 +247,25 @@ function scoreCandidate(worker: WorkerState, day: number, shift: "day" | "night"
     shift === "day"
       ? Math.max(worker.targetDay - worker.assignedDay, 0)
       : Math.max(worker.targetNight - worker.assignedNight, 0);
-  const priorityBoost = worker.priority ? 3 : 1;
+  const priorityBoost = worker.priority ? 5 : 1;
+  const ratioBias =
+    worker.priority && worker.targetDays > 0
+      ? shift === "day"
+        ? Math.max(worker.ratio / 50, 1)
+        : Math.max((100 - worker.ratio) / 50, 1)
+      : 1;
   const balancePref = shift === "day" ? worker.ratio : 100 - worker.ratio; // 0..100 (ratio is day %)
   const balanceScore = balancePref / 50; // ~0..2
   const distributionScore = 1 - Math.abs(day - daysInMonth / 2) / (daysInMonth / 2); // center-spread
   const weekendPenalty = weekend ? 0.9 : 1;
   const capPressure = worker.assigned >= worker.targetDays ? 0.6 : 1;
-  const fairness = 1 / (1 + worker.assigned);
+  const priorityGapBoost = worker.priority && remaining > 0 ? Math.max(2, remaining * 0.5) : 1;
+  const fairness = worker.priority ? 1 : 1 / (1 + worker.assigned);
   return (
     (shiftNeed * 2 + remaining + distributionScore + fairness) *
     priorityBoost *
+    ratioBias *
+    priorityGapBoost *
     balanceScore *
     weekendPenalty *
     capPressure
@@ -273,7 +300,8 @@ function isAssignmentValid(
 ) {
   if (shift === "day" && entry.day && entry.day !== worker.id) return false;
   if (shift === "night" && entry.night && entry.night !== worker.id) return false;
-  return isValidCandidate(worker, day, shift, entry.day, busyWorkers, true);
+  const otherShiftWorker = shift === "day" ? entry.night : entry.day;
+  return isValidCandidate(worker, day, shift, otherShiftWorker, busyWorkers, true);
 }
 
 function buildSchedule(
@@ -377,11 +405,25 @@ function buildSchedule(
       const busyWorkers = busyByDay.get(day);
       const candidates = normalizedPrefs
         .map((pref) => stateById.get(pref.workerId)!)
-        .filter((worker) => isValidCandidate(worker, day, shift, entry.day, busyWorkers, true));
+        .filter((worker) =>
+          isValidCandidate(
+            worker,
+            day,
+            shift,
+            shift === "day" ? entry.night : entry.day,
+            busyWorkers,
+            true
+          )
+        );
 
       if (candidates.length === 0) return;
 
-      const best = candidates
+      const priorityPool = candidates.filter(
+        (worker) => worker.priority && worker.assigned < worker.targetDays
+      );
+      const pool = priorityPool.length > 0 ? priorityPool : candidates;
+
+      const best = pool
         .map((worker) => ({
           worker,
           score: scoreCandidate(worker, day, shift, daysInMonth, weekend),
@@ -415,12 +457,24 @@ function buildSchedule(
         .filter((worker) => {
           // Hard cap only to avoid pathological overloads.
           if (worker.assigned >= worker.hardCap) return false;
-          return isValidCandidate(worker, day, shift, entry.day, busyWorkers, false);
+          return isValidCandidate(
+            worker,
+            day,
+            shift,
+            shift === "day" ? entry.night : entry.day,
+            busyWorkers,
+            false
+          );
         });
 
       if (candidates.length === 0) return;
 
-      const best = candidates
+      const priorityPool = candidates.filter(
+        (worker) => worker.priority && worker.assigned < worker.targetDays
+      );
+      const pool = priorityPool.length > 0 ? priorityPool : candidates;
+
+      const best = pool
         .map((worker) => ({
           worker,
           score: scoreCandidate(worker, day, shift, daysInMonth, weekend),
@@ -441,18 +495,25 @@ function buildSchedule(
   // Guarantee everyone gets at least one shift if possible via swaps.
   const unassigned = normalizedPrefs.filter((pref) => (stateById.get(pref.workerId)?.assigned ?? 0) === 0);
   for (const pref of unassigned) {
-    for (let day = 1; day <= daysInMonth; day++) {
-      const entry = schedule.get(day)!;
-      const shifts: ("day" | "night")[] = ["day", "night"];
-      let placed = false;
-      for (const shift of shifts) {
-        const currentId = entry[shift];
-        if (!currentId) continue;
-        const currentState = stateById.get(currentId)!;
-        const candidateState = stateById.get(pref.workerId)!;
-        // Try swap if candidate can take it and current can be removed.
-        if (
-          isValidCandidate(candidateState, day, shift, shift === "day" ? entry.night : entry.day, busyByDay.get(day), true) &&
+  for (let day = 1; day <= daysInMonth; day++) {
+    const entry = schedule.get(day)!;
+    const shifts: ("day" | "night")[] = ["day", "night"];
+    let placed = false;
+    for (const shift of shifts) {
+      const currentId = entry[shift];
+      if (!currentId) continue;
+      const currentState = stateById.get(currentId)!;
+      const candidateState = stateById.get(pref.workerId)!;
+      // Try swap if candidate can take it and current can be removed.
+      if (
+          isValidCandidate(
+            candidateState,
+            day,
+            shift,
+            shift === "day" ? entry.night : entry.day,
+            busyByDay.get(day),
+            true
+          ) &&
           currentState.assigned > 1
         ) {
           entry[shift] = pref.workerId;
@@ -581,11 +642,11 @@ export async function POST(request: Request) {
 
     const openai = getOpenAIClient();
     const systemPrompt = `
-Ti si planer smjena za njegu. Prvo ispoštuj prioritetne radnike (priority=true): daju im se njihove tražene smjene (npr. 17 dana sa 100% noćne) koliko god je to realno moguće, uz poštovanje pravila odmora.
-Istovremeno svaki odabrani radnik mora dobiti barem nekoliko smjena; preostale smjene ravnopravno podijeli tako da niko ne ostane na 0 i da raspored izgleda fer.
+Ti si planer smjena za njegu. Prvo ispoštuj prioritetne radnike (priority=true): oni moraju dobiti traženi broj smjena i preferirani omjer (npr. 17 dana sa 100% noćne) koliko god je realno moguće, uz poštovanje pravila odmora; ostale radnike prilagodi oko njih.
+Istovremeno svaki odabrani radnik treba dobiti barem nekoliko smjena; preostale smjene ravnopravno podijeli tako da niko ne ostane na 0 i da raspored izgleda fer.
 Moraš poštovati:
 - Nema 24h u komadu: isti radnik ne može dan pa noć isti dan.
-- Nakon noćne mora imati cijeli dan pauze prije nove dnevne.
+- Ako radi noć, sutradan može samo noć ili odmor (nema noć -> dan odmah sutradan). Ako radi dan, sutradan može dan ili noć.
 - Poštuj preferencije (day/night) i ratio; prioritetni radnici imaju prednost kod popune.
 - Ne planiraj "u cugu": izbjegavaj serije duže od 4-5 dana istog radnika; miješaj radnike kroz mjesec, uključujući vikende.
 - Koristi samo workerId iz liste. Ako baš nema radnika, ostavi null, ali pokušaj popuniti sve smjene.

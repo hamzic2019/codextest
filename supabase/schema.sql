@@ -48,6 +48,9 @@ create table if not exists public.plan_assignments (
 
 create index if not exists plan_assignments_plan_id_idx on public.plan_assignments(plan_id);
 create index if not exists plan_assignments_date_idx on public.plan_assignments(date);
+create unique index if not exists plan_assignments_worker_date_shift_uidx
+  on public.plan_assignments(date, shift_type, worker_id)
+  where worker_id is not null;
 create index if not exists plans_patient_idx on public.plans(patient_id);
 
 alter table public.patients enable row level security;

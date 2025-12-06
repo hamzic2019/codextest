@@ -43,6 +43,7 @@ type PreviewRow = {
 };
 
 type ShiftLockState = Record<string, Record<ShiftType, boolean>>;
+type BusyShiftMap = Record<string, Record<ShiftType, string[]>>;
 
 const SHIFT_DAY_START_HOUR = 8;
 const SHIFT_NIGHT_START_HOUR = 20;
@@ -572,6 +573,7 @@ export function PlannerWizard() {
   const [isLoadingPlan, setIsLoadingPlan] = useState(false);
   const [sanitizationNotice, setSanitizationNotice] = useState<string | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [busyShifts, setBusyShifts] = useState<BusyShiftMap>({});
 
   const statusLabels = useMemo(
     () => ({
@@ -750,6 +752,45 @@ export function PlannerWizard() {
     return () => controller.abort();
   }, [planMonth, planYear, selectedPatient, t, workerById]);
 
+  useEffect(() => {
+    const controller = new AbortController();
+    const loadBusy = async () => {
+      try {
+        const response = await fetch(
+          `/api/plans?mode=busy&month=${planMonth + 1}&year=${planYear}${
+            selectedPatient ? `&excludePatientId=${selectedPatient}` : ""
+          }`,
+          { signal: controller.signal }
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to load busy shifts");
+        }
+
+        const json = await response.json();
+        const items = Array.isArray(json.data) ? json.data : [];
+        const next: BusyShiftMap = {};
+        items.forEach((item: { date?: string; shiftType?: ShiftType; workerId?: string }) => {
+          if (!item?.date || !item?.shiftType || !item?.workerId) return;
+          if (!next[item.date]) next[item.date] = { day: [], night: [] };
+          next[item.date][item.shiftType].push(item.workerId);
+        });
+        if (!controller.signal.aborted) {
+          setBusyShifts(next);
+        }
+      } catch (error) {
+        if ((error as Error).name === "AbortError") return;
+        console.error(error);
+        if (!controller.signal.aborted) {
+          setBusyShifts({});
+        }
+      }
+    };
+
+    loadBusy();
+    return () => controller.abort();
+  }, [planMonth, planYear, selectedPatient]);
+
   const availableWorkersByShift = useMemo(() => {
     const build = (shift: ShiftType) => {
       const fromPref = selectedWorkers
@@ -863,6 +904,16 @@ export function PlannerWizard() {
   const assignWorker = (dateKey: string, shift: ShiftType, workerId: string) => {
     const lockState = shiftLocks[dateKey];
     if (lockState?.[shift]) return;
+    const busy = busyShifts[dateKey]?.[shift] ?? [];
+    const otherShift = shift === "day" ? assignments[dateKey]?.night : assignments[dateKey]?.day;
+    if (busy.includes(workerId)) {
+      setErrorMessage("Radnik je već zauzet na drugom planu za taj dan/smjenu.");
+      return;
+    }
+    if (otherShift && otherShift === workerId) {
+      setErrorMessage("Isti radnik ne može biti i na dnevnoj i na noćnoj smjeni istog dana.");
+      return;
+    }
     setStatusMessage(null);
     setHasUnsavedChanges(true);
     setAssignments((prev) => ({
@@ -1385,6 +1436,14 @@ export function PlannerWizard() {
               const lockState = shiftLocks[row.dateKey] ?? { day: false, night: false };
               const dayLocked = lockState.day;
               const nightLocked = lockState.night;
+              const busyDayIds = new Set(busyShifts[row.dateKey]?.day ?? []);
+              const busyNightIds = new Set(busyShifts[row.dateKey]?.night ?? []);
+              const dayOptions = availableWorkersByShift.day.filter(
+                (worker) => !busyDayIds.has(worker.id)
+              );
+              const nightOptions = availableWorkersByShift.night.filter(
+                (worker) => !busyNightIds.has(worker.id)
+              );
               const rowLockedClass =
                 dayLocked && nightLocked ? "ring-1 ring-amber-200 bg-amber-50/70" : "";
               const isPastDate = new Date(row.dateKey) < todayStart;
@@ -1411,7 +1470,7 @@ export function PlannerWizard() {
                   </div>
                   <ShiftDropdownCell
                     shift="day"
-                    availableWorkers={availableWorkersByShift.day}
+                    availableWorkers={dayOptions}
                     selectedWorker={
                       assignedDayId ? workerById.get(assignedDayId) : undefined
                     }
@@ -1422,7 +1481,7 @@ export function PlannerWizard() {
                   />
                   <ShiftDropdownCell
                     shift="night"
-                    availableWorkers={availableWorkersByShift.night}
+                    availableWorkers={nightOptions}
                     selectedWorker={
                       assignedNightId ? workerById.get(assignedNightId) : undefined
                     }

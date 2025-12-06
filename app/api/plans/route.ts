@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
-import type { Plan, PlanAssignment } from "@/types";
+import type { Plan, PlanAssignment, ShiftType } from "@/types";
 
 type PlanRow = {
   id: string;
@@ -55,6 +55,7 @@ export async function GET(request: Request) {
     const mode = url.searchParams.get("mode");
     const monthParam = url.searchParams.get("month");
     const yearParam = url.searchParams.get("year");
+    const excludePatientId = url.searchParams.get("excludePatientId");
 
     const supabase = createServiceSupabaseClient();
 
@@ -76,6 +77,42 @@ export async function GET(request: Request) {
             year: item.year,
           })) ?? [],
       });
+    }
+
+    if (mode === "busy") {
+      const month = Number(monthParam);
+      const year = Number(yearParam);
+
+      if (Number.isNaN(month) || Number.isNaN(year)) {
+        return NextResponse.json(
+          { error: "month i year su obavezni parametri." },
+          { status: 400 }
+        );
+      }
+
+      const { data, error } = await supabase
+        .from("plan_assignments")
+        .select("date, shift_type, worker_id, plans!inner(patient_id, month, year)")
+        .not("worker_id", "is", null)
+        .eq("plans.month", month)
+        .eq("plans.year", year)
+        .order("date", { ascending: true });
+
+      if (error) throw error;
+
+      const filtered =
+        excludePatientId && excludePatientId.length > 0
+          ? (data ?? []).filter((row) => (row as any).plans?.patient_id !== excludePatientId)
+          : data ?? [];
+
+      const busy = filtered.map((row) => ({
+        date: row.date,
+        shiftType: row.shift_type as "day" | "night",
+        workerId: row.worker_id as string,
+        patientId: (row as any).plans?.patient_id as string | undefined,
+      }));
+
+      return NextResponse.json({ data: busy });
     }
 
     const month = Number(monthParam);
@@ -135,6 +172,46 @@ export async function POST(request: Request) {
 
     const supabase = createServiceSupabaseClient();
 
+    const assignmentsToCheck = assignments.filter(
+      (assignment) => assignment.workerId !== null && assignment.workerId !== undefined
+    );
+
+    if (assignmentsToCheck.length > 0) {
+      const workerIds = Array.from(
+        new Set(assignmentsToCheck.map((assignment) => assignment.workerId as string))
+      );
+      const dates = Array.from(new Set(assignmentsToCheck.map((assignment) => assignment.date)));
+
+      const { data: conflictRows, error: conflictError } = await supabase
+        .from("plan_assignments")
+        .select("date, shift_type, worker_id, plans!inner(patient_id, month, year)")
+        .in("worker_id", workerIds)
+        .in("date", dates)
+        .eq("plans.month", month)
+        .eq("plans.year", year);
+
+      if (conflictError) throw conflictError;
+
+      const conflicting = (conflictRows ?? []).filter((row) => {
+        const patient = (row as any).plans?.patient_id as string | undefined;
+        if (!row.worker_id || !row.shift_type) return false;
+        if (patient === patientId) return false;
+        return assignmentsToCheck.some(
+          (assignment) =>
+            assignment.workerId === row.worker_id &&
+            assignment.date === row.date &&
+            assignment.shiftType === (row.shift_type as ShiftType)
+        );
+      });
+
+      if (conflicting.length > 0) {
+        return NextResponse.json(
+          { error: "Neki radnici su već zauzeti na drugim planovima za iste datume/smjene." },
+          { status: 409 }
+        );
+      }
+    }
+
     const { data: existing } = await supabase
       .from("plans")
       .select("id")
@@ -178,7 +255,16 @@ export async function POST(request: Request) {
       const { error: assignError } = await supabase
         .from("plan_assignments")
         .insert(assignmentRows);
-      if (assignError) throw assignError;
+      if (assignError) {
+        await supabase.from("plans").delete().eq("id", planId);
+        if (assignError.code === "23505") {
+          return NextResponse.json(
+            { error: "Radnik je već zauzet na drugom planu za taj datum/smjenu." },
+            { status: 409 }
+          );
+        }
+        throw assignError;
+      }
     }
 
     const responsePlan = mapPlan(inserted as PlanRow, assignmentRows as AssignmentRow[]);
