@@ -114,6 +114,13 @@ function initials(name: string) {
     .toUpperCase();
 }
 
+type CardStyle = "minimal" | "glass";
+
+const CARD_STYLE_OPTIONS: Record<CardStyle, { label: string; helper: string }> = {
+  minimal: { label: "Minimal", helper: "Čisto i pregledno" },
+  glass: { label: "Aurora", helper: "Stakleni gradient look" },
+};
+
 function WorkerSearchSelect({
   workers,
   selectedIds,
@@ -423,33 +430,6 @@ function ShiftDropdownCell({
   );
 }
 
-function ShiftToggle({
-  active,
-  icon: Icon,
-  label,
-  onClick,
-}: {
-  active: boolean;
-  icon: typeof Sun;
-  label: string;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
-        active
-          ? "border-sky-200 bg-sky-50 text-sky-800"
-          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
-      }`}
-    >
-      <Icon className="h-4 w-4" />
-      {label}
-    </button>
-  );
-}
-
 function preferenceFromWorker(worker: Worker, priority = false): WorkerPreference {
   const shifts =
     worker.preferredShifts && worker.preferredShifts.length > 0
@@ -599,6 +579,7 @@ export function PlannerWizard() {
   const [isLoadingPlan, setIsLoadingPlan] = useState(false);
   const [sanitizationNotice, setSanitizationNotice] = useState<string | null>(null);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+  const [cardStyle, setCardStyle] = useState<CardStyle>("minimal");
 
   const statusLabels = useMemo(
     () => ({
@@ -608,13 +589,6 @@ export function PlannerWizard() {
       externi: t("planner.worker.status.externi"),
       pocetnik: t("planner.worker.status.pocetnik"),
       anerkennung: t("planner.worker.status.anerkennung"),
-    }),
-    [t]
-  );
-  const shiftToggleLabels = useMemo(
-    () => ({
-      day: t("planner.worker.allowDay"),
-      night: t("planner.worker.allowNight"),
     }),
     [t]
   );
@@ -827,21 +801,6 @@ export function PlannerWizard() {
       prev.map((item) =>
         item.workerId === workerId ? { ...item, ...updates } : item
       )
-    );
-  };
-
-  const toggleShift = (workerId: string, shift: ShiftType) => {
-    setSelectedWorkers((prev) =>
-      prev.map((item) => {
-        if (item.workerId !== workerId) return item;
-        const nextDay = shift === "day" ? !item.allowDay : item.allowDay;
-        const nextNight = shift === "night" ? !item.allowNight : item.allowNight;
-
-        const safeDay = nextDay || (!nextDay && !nextNight && shift === "night");
-        const safeNight = nextNight || (!nextDay && !nextNight && shift === "day");
-
-        return { ...item, allowDay: safeDay, allowNight: safeNight };
-      })
     );
   };
 
@@ -1150,9 +1109,33 @@ export function PlannerWizard() {
       </div>
 
       <div className="space-y-3">
-        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-          {t("planner.workersLabel")}
-        </p>
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+            {t("planner.workersLabel")}
+          </p>
+          <div className="inline-flex items-center gap-1 rounded-full border border-slate-200 bg-slate-50 p-1 text-xs font-semibold text-slate-600">
+            {Object.entries(CARD_STYLE_OPTIONS).map(([styleKey, option]) => {
+              const active = cardStyle === styleKey;
+              return (
+                <button
+                  key={styleKey}
+                  type="button"
+                  onClick={() => setCardStyle(styleKey as CardStyle)}
+                  className={`flex items-center gap-2 rounded-full px-3 py-2 transition ${
+                    active
+                      ? "bg-white text-slate-900 shadow-sm"
+                      : "text-slate-500 hover:text-slate-700"
+                  }`}
+                >
+                  <span>{option.label}</span>
+                  <span className="hidden text-[10px] font-normal text-slate-400 sm:inline">
+                    {option.helper}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
         <WorkerSearchSelect
           workers={workers}
           selectedIds={selectedIds}
@@ -1182,77 +1165,102 @@ export function PlannerWizard() {
                   ? t("planner.worker.focusDay", { percent: item.ratio })
                   : t("planner.worker.focusNight", { percent: 100 - item.ratio });
 
+            const sliderPrimary = cardStyle === "glass" ? "#38bdf8" : "#0ea5e9";
+            const sliderBase =
+              cardStyle === "glass" ? "rgba(255,255,255,0.18)" : "#e2e8f0";
+            const textMutedClass =
+              cardStyle === "glass" ? "text-slate-200" : "text-slate-500";
+            const chipClass =
+              cardStyle === "glass"
+                ? "border-white/25 bg-white/10 text-white"
+                : "border-slate-200 bg-slate-50 text-slate-700";
+            const priorityClass = item.priority
+              ? cardStyle === "glass"
+                ? "border-amber-200/70 bg-amber-400/20 text-amber-50"
+                : "border-amber-200 bg-amber-50 text-amber-800"
+              : cardStyle === "glass"
+                ? "border-white/25 bg-white/5 text-white hover:border-white/35"
+                : "border-slate-200 bg-white text-slate-600 hover:border-slate-300";
+            const controlSurface =
+              cardStyle === "glass"
+                ? "border-white/15 bg-white/5 text-white"
+                : "border-slate-200 bg-white text-slate-700";
+            const cardContainerClass =
+              cardStyle === "glass"
+                ? "relative overflow-hidden rounded-3xl border border-white/15 bg-gradient-to-br from-slate-900/90 via-slate-900/80 to-slate-950/90 p-5 text-white shadow-[0_24px_70px_rgba(15,23,42,0.45)]"
+                : "rounded-2xl border border-border/70 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.06)]";
+
             return (
-              <div
-                key={item.workerId}
-                className="rounded-2xl border border-border/70 bg-white p-4 shadow-[0_14px_40px_rgba(15,23,42,0.06)]"
-              >
-                <div className="flex items-start gap-3">
-                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-900 text-sm font-semibold text-white">
+              <div key={item.workerId} className={cardContainerClass}>
+                {cardStyle === "glass" ? (
+                  <div className="pointer-events-none absolute -right-10 -top-16 h-48 w-48 rotate-12 rounded-full bg-[radial-gradient(circle_at_30%_30%,rgba(56,189,248,0.32),transparent_65%)] blur-3xl" />
+                ) : null}
+
+                <div className="relative flex items-start gap-3">
+                  <div
+                    className={`flex h-12 w-12 items-center justify-center rounded-2xl text-sm font-semibold ${
+                      cardStyle === "glass"
+                        ? "border border-white/15 bg-white/10 text-white"
+                        : "bg-slate-900 text-white"
+                    }`}
+                  >
                     {initials(worker.name)}
                   </div>
-                  <div className="flex-1">
+                  <div className="flex-1 space-y-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-sm font-semibold text-slate-900">
+                      <p
+                        className={`text-base font-semibold ${
+                          cardStyle === "glass" ? "text-white" : "text-slate-900"
+                        }`}
+                      >
                         {worker.name}
                       </p>
-                      <Badge variant={statusVariant(worker.status)}>
-                        {statusLabels[worker.status] ?? worker.status}
-                      </Badge>
-                      <Badge variant="sky">{worker.city}</Badge>
-                      {item.priority ? (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-amber-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide text-amber-700">
-                          <Star className="h-3.5 w-3.5" /> {t("planner.worker.priority")}
-                        </span>
-                      ) : null}
+                      <span
+                        className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${chipClass}`}
+                      >
+                        {worker.city}
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => updateWorker(item.workerId, { priority: !item.priority })}
+                        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-[0.12em] transition ${priorityClass}`}
+                      >
+                        <Star className="h-3.5 w-3.5" />
+                        {item.priority
+                          ? t("planner.worker.priority")
+                          : t("planner.worker.addPriority")}
+                      </button>
                       <button
                         type="button"
                         onClick={() => removeWorker(item.workerId)}
-                        className="ml-auto inline-flex h-8 w-8 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                        className={`ml-auto inline-flex h-9 w-9 items-center justify-center rounded-full border text-slate-400 transition ${
+                          cardStyle === "glass"
+                            ? "border-white/20 bg-white/5 hover:border-red-200/60 hover:bg-red-400/10 hover:text-red-100"
+                            : "border-slate-200 bg-white hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+                        }`}
                         aria-label={t("planner.worker.removeAria")}
                       >
                         <X className="h-4 w-4" />
                       </button>
                     </div>
-                    <p className="text-xs text-slate-500">
-                      {worker.role || t("planner.worker.roleFallback")}
+                    <p className={`text-xs ${textMutedClass}`}>
+                      {focusLabel}
                     </p>
                   </div>
                 </div>
 
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  <ShiftToggle
-                    active={item.allowDay}
-                    icon={Sun}
-                    label={shiftToggleLabels.day}
-                    onClick={() => toggleShift(item.workerId, "day")}
-                  />
-                  <ShiftToggle
-                    active={item.allowNight}
-                    icon={Moon}
-                    label={shiftToggleLabels.night}
-                    onClick={() => toggleShift(item.workerId, "night")}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => updateWorker(item.workerId, { priority: !item.priority })}
-                    className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs font-semibold transition ${
-                      item.priority
-                        ? "border-amber-200 bg-amber-50 text-amber-800"
-                        : "border-slate-200 bg-white text-slate-600 hover:border-slate-300"
-                    }`}
-                  >
-                    <Star className="h-4 w-4" />
-                    {item.priority
-                      ? t("planner.worker.priority")
-                      : t("planner.worker.addPriority")}
-                  </button>
-                </div>
-
-                <div className="mt-4 space-y-3 rounded-xl bg-slate-50/80 p-3">
-                  <div className="flex items-center justify-between text-xs font-semibold uppercase tracking-[0.15em] text-slate-500">
-                    <span>{t("planner.worker.shiftFocus")}</span>
-                    <span className="text-slate-700">{focusLabel}</span>
+                <div
+                  className={`relative mt-5 space-y-4 rounded-2xl p-4 ${
+                    cardStyle === "glass"
+                      ? "border border-white/12 bg-white/5 backdrop-blur"
+                      : "border border-slate-100 bg-slate-50/80"
+                  }`}
+                >
+                  <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em]">
+                    <span className={textMutedClass}>{t("planner.worker.shiftFocus")}</span>
+                    <span className={cardStyle === "glass" ? "text-white" : "text-slate-700"}>
+                      {focusLabel}
+                    </span>
                   </div>
                   <input
                     type="range"
@@ -1262,16 +1270,23 @@ export function PlannerWizard() {
                     onChange={(event) =>
                       updateWorker(item.workerId, { ratio: Number(event.target.value) })
                     }
-                    className="h-2 w-full cursor-pointer appearance-none rounded-full bg-slate-200"
+                    className="h-3 w-full cursor-pointer appearance-none rounded-full"
                     style={{
-                      background: `linear-gradient(90deg, #0ea5e9 ${item.ratio}%, #e2e8f0 ${item.ratio}%)`,
+                      background: `linear-gradient(90deg, ${sliderPrimary} ${item.ratio}%, ${sliderBase} ${item.ratio}%)`,
                     }}
                   />
-                  <p className="text-[11px] text-slate-500">
-                    0% = samo noćne, 100% = samo dnevne.
-                  </p>
+                  <div className="flex items-center justify-between text-xs">
+                    <span className={textMutedClass}>
+                      Pomjeri slider prema dnevnim ili noćnim smjenama.
+                    </span>
+                    <span className={`text-sm font-semibold ${cardStyle === "glass" ? "text-white" : "text-slate-900"}`}>
+                      {item.ratio}%
+                    </span>
+                  </div>
                   <div className="grid gap-3 sm:grid-cols-2">
-                    <label className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
+                    <label
+                      className={`flex items-center gap-3 rounded-xl border px-3 py-3 text-xs font-semibold ${controlSurface}`}
+                    >
                       <Clock className="h-4 w-4" />
                       <span className="uppercase tracking-[0.12em]">
                         {t("planner.worker.planDays")}
@@ -1284,18 +1299,29 @@ export function PlannerWizard() {
                         onChange={(event) =>
                           updateWorker(item.workerId, { days: Number(event.target.value) || 1 })
                         }
-                        className="ml-auto w-16 rounded-lg border border-slate-200 px-2 py-1 text-right text-sm font-semibold text-slate-900 focus:border-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                        className={`ml-auto w-16 rounded-lg border px-2 py-1 text-right text-sm font-semibold focus:outline-none focus:ring-2 ${
+                          cardStyle === "glass"
+                            ? "border-white/20 bg-white/5 text-white focus:border-sky-200/80 focus:ring-sky-200/20"
+                            : "border-slate-200 bg-white text-slate-900 focus:border-sky-200 focus:ring-sky-100"
+                        }`}
                       />
                     </label>
-                    <div className="flex items-center justify-between rounded-xl border border-slate-200 bg-white px-3 py-2 text-xs font-semibold text-slate-600">
+                    <div
+                      className={`flex items-center justify-between rounded-xl border px-3 py-3 text-xs font-semibold ${controlSurface}`}
+                    >
                       <span className="uppercase tracking-[0.12em]">
-                        {t("planner.worker.balance")}
+                        {item.priority ? t("planner.worker.priority") : t("planner.worker.addPriority")}
                       </span>
-                      <span className="text-sm font-bold text-slate-900">{item.ratio}%</span>
+                      <span
+                        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold ${priorityClass}`}
+                      >
+                        <Star className="h-3.5 w-3.5" />
+                        {item.priority ? "On" : "Off"}
+                      </span>
                     </div>
                   </div>
-                  <p className="text-[11px] text-slate-500">
-                    Broj dana je želja; ako nema dovoljno pokrivenosti, planer može dodati koji dan više.
+                  <p className={`text-[11px] ${textMutedClass}`}>
+                    0% = samo noćne, 100% = samo dnevne · Planiraj dane po želji.
                   </p>
                 </div>
               </div>
