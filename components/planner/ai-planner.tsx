@@ -19,6 +19,7 @@ import { Badge } from "../ui/badge";
 import { Card } from "../ui/card";
 import type {
   Patient,
+  Plan,
   PlanAssignment,
   ShiftType,
   Worker,
@@ -36,6 +37,7 @@ type PreviewRow = {
   monthLabel: string;
   day: string;
   night: string;
+  isToday: boolean;
 };
 
 const MONTH_LABELS: Record<Language, string[]> = {
@@ -482,9 +484,14 @@ export function PlannerWizard() {
   const [selectedWorkers, setSelectedWorkers] = useState<WorkerPreference[]>([]);
   const [planMonth, setPlanMonth] = useState(() => new Date().getMonth());
   const [planYear, setPlanYear] = useState(() => new Date().getFullYear());
+  const todayDate = useMemo(() => new Date(), []);
   const plannerMonthNames = useMemo(
     () => MONTH_LABELS[language] ?? MONTH_LABELS.bs,
     [language]
+  );
+  const todayDisplay = useMemo(
+    () => `${todayDate.getDate()}. ${plannerMonthNames[todayDate.getMonth()]}`,
+    [plannerMonthNames, todayDate]
   );
   const availablePlanYears = useMemo(() => {
     const currentYear = new Date().getFullYear();
@@ -494,6 +501,8 @@ export function PlannerWizard() {
     () => formatMonthLabel(language, new Date(planYear, planMonth, 1)),
     [language, planMonth, planYear]
   );
+  const isCurrentPlanMonth =
+    planMonth === todayDate.getMonth() && planYear === todayDate.getFullYear();
   const [promptText, setPromptText] = useState("");
   const [assignments, setAssignments] = useState<
     Record<string, Record<ShiftType, string | null>>
@@ -504,6 +513,7 @@ export function PlannerWizard() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [isLoadingData, setIsLoadingData] = useState(true);
+  const [isLoadingPlan, setIsLoadingPlan] = useState(false);
   const [sanitizationNotice, setSanitizationNotice] = useState<string | null>(null);
 
   const statusLabels = useMemo(
@@ -613,6 +623,75 @@ export function PlannerWizard() {
     }
   }, [selectedWorkers.length, workers]);
 
+  useEffect(() => {
+    if (!selectedPatient) return;
+
+    const controller = new AbortController();
+    const loadPlan = async () => {
+      setIsLoadingPlan(true);
+      setStatusMessage(null);
+      setErrorMessage(null);
+      setSanitizationNotice(null);
+
+      try {
+        const response = await fetch(
+          `/api/plans?patientId=${selectedPatient}&month=${planMonth + 1}&year=${planYear}`,
+          { signal: controller.signal }
+        );
+
+        if (!response.ok) {
+          throw new Error("Failed to load plan");
+        }
+
+        const json = await response.json();
+        const plan = (json.data ?? null) as Plan | null;
+
+        if (!plan) {
+          setAssignments({});
+          setGeneratedSummary(null);
+          setPromptText("");
+          return;
+        }
+
+        const planAssignments = plan.assignments ?? [];
+        setAssignments(assignmentsListToMap(planAssignments));
+        setGeneratedSummary(plan.summary ?? null);
+        setPromptText(plan.prompt ?? "");
+
+        if (planAssignments.length > 0) {
+          setSelectedWorkers((prev) => {
+            const existing = new Set(prev.map((item) => item.workerId));
+            const next = [...prev];
+
+            planAssignments.forEach((assignment) => {
+              if (!assignment.workerId || existing.has(assignment.workerId)) return;
+              const workerMeta = workerById.get(assignment.workerId);
+              if (!workerMeta) return;
+              next.push(preferenceFromWorker(workerMeta));
+              existing.add(assignment.workerId);
+            });
+
+            return next;
+          });
+        }
+      } catch (error) {
+        if ((error as Error).name === "AbortError") return;
+        console.error(error);
+        setAssignments({});
+        setGeneratedSummary(null);
+        setPromptText("");
+        setErrorMessage(t("planner.loadError"));
+      } finally {
+        if (!controller.signal.aborted) {
+          setIsLoadingPlan(false);
+        }
+      }
+    };
+
+    loadPlan();
+    return () => controller.abort();
+  }, [planMonth, planYear, selectedPatient, t, workerById]);
+
   const availableWorkersByShift = useMemo(() => {
     const build = (shift: ShiftType) => {
       const fromPref = selectedWorkers
@@ -721,9 +800,22 @@ export function PlannerWizard() {
         monthLabel: formatMonthLabel(language, date),
         day: dayWorker?.name ?? t("planner.shift.unknown"),
         night: nightWorker?.name ?? t("planner.shift.unknown"),
+        isToday: isCurrentPlanMonth && date.getDate() === todayDate.getDate(),
       };
     });
-  }, [assignments, daysInMonth, language, planMonth, planYear, selectedWorkers, t, workerById, workers]);
+  }, [
+    assignments,
+    daysInMonth,
+    isCurrentPlanMonth,
+    language,
+    planMonth,
+    planYear,
+    selectedWorkers,
+    t,
+    todayDate,
+    workerById,
+    workers,
+  ]);
 
   const assignWorker = (dateKey: string, shift: ShiftType, workerId: string) => {
     setStatusMessage(null);
@@ -877,8 +969,14 @@ export function PlannerWizard() {
   };
 
   const disableGenerate =
-    isGenerating || isLoadingData || !selectedPatient || selectedWorkers.length === 0;
-  const disableSave = isSaving || isGenerating || !selectedPatient || !hasAnyAssignment;
+    isGenerating ||
+    isLoadingData ||
+    isLoadingPlan ||
+    !selectedPatient ||
+    selectedWorkers.length === 0;
+  const disableSave =
+    isSaving || isGenerating || isLoadingPlan || !selectedPatient || !hasAnyAssignment;
+  const todayRow = previewRows.find((row) => row.isToday);
 
   return (
     <Card className="space-y-4">
@@ -1210,7 +1308,9 @@ export function PlannerWizard() {
               return (
                 <div
                   key={row.dateKey}
-                  className="grid grid-cols-[1.3fr_1fr_1fr] px-4 py-3 text-sm text-slate-700 transition-colors hover:bg-slate-50"
+                  className={`grid grid-cols-[1.3fr_1fr_1fr] px-4 py-3 text-sm text-slate-700 transition-colors hover:bg-slate-50 ${
+                    row.isToday ? "bg-sky-50 text-slate-900 ring-1 ring-sky-200" : ""
+                  }`}
                 >
                   <span className="flex flex-col gap-0.5 text-slate-900">
                     <span className="text-base font-semibold leading-tight">
@@ -1240,6 +1340,14 @@ export function PlannerWizard() {
               );
             })}
           </div>
+          {todayRow && (
+            <div className="border-t border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <span className="font-semibold text-slate-800">
+                {t("overview.calendar.todayLabel")}:{" "}
+              </span>
+              <span className="text-slate-700">{todayDisplay}</span>
+            </div>
+          )}
         </div>
       </div>
     </Card>
