@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { CalendarClock, ChevronDown, Moon, Sun } from "lucide-react";
+import { CalendarClock, ChevronDown, Moon, Sun, Trash2, X } from "lucide-react";
 import { PatientSelector } from "@/components/planner/patient-selector";
 import { Card } from "@/components/ui/card";
 import { useTranslations } from "@/components/i18n/language-provider";
@@ -81,11 +81,11 @@ export default function PlanOverviewPage() {
   const [availablePlans, setAvailablePlans] = useState<{ month: number; year: number }[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deleteFeedback, setDeleteFeedback] = useState<
     { type: "success" | "error"; message: string } | null
   >(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
   const workerById = useMemo(
     () => new Map(workersState.map((worker) => [worker.id, worker])),
@@ -169,8 +169,8 @@ export default function PlanOverviewPage() {
     isDeleting || isLoading || !hasPlanForSelection || !selectedPatient;
 
   useEffect(() => {
-    setDeleteConfirm(false);
     setDeleteFeedback(null);
+    setIsDeleteDialogOpen(false);
   }, [selectedMonth, selectedPatient, selectedYear]);
 
   useEffect(() => {
@@ -246,14 +246,9 @@ export default function PlanOverviewPage() {
     loadPlan();
   }, [selectedPatient, selectedMonth, selectedYear, t]);
 
-  const handleDeletePlan = async () => {
+  const handleDeletePlanConfirm = async () => {
     if (!selectedPatient) return;
     setDeleteFeedback(null);
-
-    if (!deleteConfirm) {
-      setDeleteConfirm(true);
-      return;
-    }
 
     setIsDeleting(true);
     try {
@@ -277,7 +272,7 @@ export default function PlanOverviewPage() {
       setDeleteFeedback({ type: "error", message: t("overview.deleteError") });
     } finally {
       setIsDeleting(false);
-      setDeleteConfirm(false);
+      setIsDeleteDialogOpen(false);
     }
   };
 
@@ -372,27 +367,15 @@ export default function PlanOverviewPage() {
                 </span>
                 <button
                   type="button"
-                  onClick={handleDeletePlan}
+                  onClick={() => setIsDeleteDialogOpen(true)}
                   disabled={disableDeleteButton}
-                  className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${
-                    deleteConfirm
-                      ? "border-red-300 bg-red-50 text-red-700"
-                      : "border-red-200 bg-white text-red-700 hover:border-red-300 hover:bg-red-50"
-                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                  className="inline-flex items-center gap-2 rounded-xl border border-rose-200 bg-white px-3 py-2 text-sm font-semibold text-rose-700 shadow-sm transition hover:-translate-y-[1px] hover:border-rose-300 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  {isDeleting
-                    ? t("overview.deleting")
-                    : deleteConfirm
-                      ? t("overview.deleteConfirm")
-                      : t("overview.delete")}
+                  <Trash2 className="h-4 w-4" />
+                  {isDeleting ? t("overview.deleting") : t("overview.delete")}
                 </button>
               </div>
             </div>
-            {deleteConfirm ? (
-              <p className="text-sm font-semibold text-red-600">
-                {t("overview.deleteHint")}
-              </p>
-            ) : null}
             {deleteFeedback ? (
               <div
                 className={`rounded-xl border px-4 py-3 text-sm font-semibold ${
@@ -464,6 +447,49 @@ export default function PlanOverviewPage() {
           </Card>
         </div>
       </Card>
+
+      {isDeleteDialogOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 px-4 py-6 backdrop-blur-sm">
+          <div className="relative w-full max-w-md space-y-5 rounded-3xl border border-slate-200 bg-white px-6 py-7 shadow-[0_28px_80px_rgba(15,23,42,0.35)]">
+            <button
+              type="button"
+              onClick={() => setIsDeleteDialogOpen(false)}
+              aria-label={t("patients.modal.cancel")}
+              className="absolute right-4 top-4 inline-flex h-10 w-10 items-center justify-center rounded-2xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-700"
+            >
+              <X className="h-5 w-5" />
+            </button>
+
+            <div className="space-y-2">
+              <p className="text-xl font-semibold text-slate-900">
+                {t("overview.deleteDialog.title")}
+              </p>
+              <p className="text-sm leading-relaxed text-slate-600">
+                {t("overview.deleteDialog.body")}
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <button
+                type="button"
+                onClick={handleDeletePlanConfirm}
+                disabled={isDeleting || disableDeleteButton}
+                className="inline-flex w-full items-center justify-center gap-3 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm font-semibold text-rose-700 shadow-inner transition hover:border-rose-300 hover:bg-rose-100 disabled:cursor-not-allowed disabled:opacity-70"
+              >
+                <Trash2 className="h-4 w-4" />
+                {isDeleting ? t("overview.deleting") : t("overview.deleteConfirm")}
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsDeleteDialogOpen(false)}
+                className="inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-800 transition hover:border-slate-300 hover:bg-slate-50"
+              >
+                {t("patients.modal.cancel")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

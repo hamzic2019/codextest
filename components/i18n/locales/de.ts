@@ -205,6 +205,9 @@ const translations = {
   "overview.delete": "Plan löschen",
   "overview.deleteConfirm": "Löschen bestätigen",
   "overview.deleteHint": "Klicke erneut, um den Plan für diesen Monat zu löschen.",
+  "overview.deleteDialog.title": "Plan löschen?",
+  "overview.deleteDialog.body":
+    "Bist du sicher, dass du diesen Plan löschen möchtest? Nach dem Löschen gehen alle zugehörigen Daten dauerhaft verloren.",
   "overview.deleting": "Lösche...",
   "overview.deleteSuccess": "Plan wurde gelöscht.",
   "overview.deleteError": "Plan konnte nicht gelöscht werden.",

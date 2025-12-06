@@ -213,6 +213,9 @@ const translations = {
     "overview.delete": "Obriši plan",
     "overview.deleteConfirm": "Potvrdi brisanje",
     "overview.deleteHint": "Klikni još jednom da obrišeš plan za ovaj mjesec.",
+    "overview.deleteDialog.title": "Obriši plan?",
+    "overview.deleteDialog.body":
+      "Da li si siguran da želiš obrisati ovaj plan? Nakon brisanja, svi podaci će biti trajno uklonjeni.",
     "overview.deleting": "Brišem...",
     "overview.deleteSuccess": "Plan je obrisan.",
     "overview.deleteError": "Greška pri brisanju plana.",
@@ -418,6 +421,9 @@ const translations = {
     "overview.delete": "Delete plan",
     "overview.deleteConfirm": "Confirm delete",
     "overview.deleteHint": "Click once more to delete this month's plan.",
+    "overview.deleteDialog.title": "Delete plan?",
+    "overview.deleteDialog.body":
+      "Are you sure you want to delete this plan? Once deleted, all associated data will be permanently lost.",
     "overview.deleting": "Deleting...",
     "overview.deleteSuccess": "Plan deleted.",
     "overview.deleteError": "Could not delete the plan.",
@@ -623,6 +629,9 @@ const translations = {
     "overview.delete": "Plan löschen",
     "overview.deleteConfirm": "Löschen bestätigen",
     "overview.deleteHint": "Klicke erneut, um den Plan für diesen Monat zu löschen.",
+    "overview.deleteDialog.title": "Plan löschen?",
+    "overview.deleteDialog.body":
+      "Bist du sicher, dass du diesen Plan löschen möchtest? Nach dem Löschen gehen alle zugehörigen Daten dauerhaft verloren.",
     "overview.deleting": "Lösche...",
     "overview.deleteSuccess": "Plan wurde gelöscht.",
     "overview.deleteError": "Plan konnte nicht gelöscht werden.",

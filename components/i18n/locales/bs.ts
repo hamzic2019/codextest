@@ -205,6 +205,9 @@ const translations = {
   "overview.delete": "Obriši plan",
   "overview.deleteConfirm": "Potvrdi brisanje",
   "overview.deleteHint": "Klikni još jednom da obrišeš plan za ovaj mjesec.",
+  "overview.deleteDialog.title": "Obriši plan?",
+  "overview.deleteDialog.body":
+    "Da li si siguran da želiš obrisati ovaj plan? Nakon brisanja, svi podaci će biti trajno uklonjeni.",
   "overview.deleting": "Brišem...",
   "overview.deleteSuccess": "Plan je obrisan.",
   "overview.deleteError": "Greška pri brisanju plana.",
