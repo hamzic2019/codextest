@@ -81,6 +81,11 @@ export default function PlanOverviewPage() {
   const [availablePlans, setAvailablePlans] = useState<{ month: number; year: number }[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [deleteConfirm, setDeleteConfirm] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteFeedback, setDeleteFeedback] = useState<
+    { type: "success" | "error"; message: string } | null
+  >(null);
 
   const workerById = useMemo(
     () => new Map(workersState.map((worker) => [worker.id, worker])),
@@ -124,6 +129,14 @@ export default function PlanOverviewPage() {
     return unique.length > 0 ? unique : [fallbackYear];
   }, [availablePlans, fallbackYear]);
 
+  const hasPlanForSelection = useMemo(
+    () =>
+      availablePlans.some(
+        (plan) => plan.year === selectedYear && plan.month === selectedMonth + 1
+      ),
+    [availablePlans, selectedMonth, selectedYear]
+  );
+
   const isCurrentMonth = selectedMonth === todayDate.getMonth();
 
   const rows = useMemo(() => {
@@ -152,6 +165,13 @@ export default function PlanOverviewPage() {
   }, [assignmentByDate, daysInMonth, isCurrentMonth, language, monthStart, t, todayDate, workerById]);
 
   const todayRow = rows.find((row) => row.isToday);
+  const disableDeleteButton =
+    isDeleting || isLoading || !hasPlanForSelection || !selectedPatient;
+
+  useEffect(() => {
+    setDeleteConfirm(false);
+    setDeleteFeedback(null);
+  }, [selectedMonth, selectedPatient, selectedYear]);
 
   useEffect(() => {
     const loadBaseData = async () => {
@@ -225,6 +245,41 @@ export default function PlanOverviewPage() {
     };
     loadPlan();
   }, [selectedPatient, selectedMonth, selectedYear, t]);
+
+  const handleDeletePlan = async () => {
+    if (!selectedPatient) return;
+    setDeleteFeedback(null);
+
+    if (!deleteConfirm) {
+      setDeleteConfirm(true);
+      return;
+    }
+
+    setIsDeleting(true);
+    try {
+      const response = await fetch(
+        `/api/plans?patientId=${selectedPatient}&month=${selectedMonth + 1}&year=${selectedYear}`,
+        { method: "DELETE" }
+      );
+
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) {
+        throw new Error((json as { error?: string }).error || "Failed to delete plan");
+      }
+
+      setPlanAssignments([]);
+      setAvailablePlans((prev) =>
+        prev.filter((plan) => !(plan.year === selectedYear && plan.month === selectedMonth + 1))
+      );
+      setDeleteFeedback({ type: "success", message: t("overview.deleteSuccess") });
+    } catch (err) {
+      console.error(err);
+      setDeleteFeedback({ type: "error", message: t("overview.deleteError") });
+    } finally {
+      setIsDeleting(false);
+      setDeleteConfirm(false);
+    }
+  };
 
   return (
     <div className="flex flex-col gap-5">
@@ -302,7 +357,7 @@ export default function PlanOverviewPage() {
 
         <div>
           <Card className="space-y-3 border border-slate-100 p-4 shadow-sm">
-            <div className="flex items-center justify-between">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="text-[11px] uppercase tracking-[0.3em] text-slate-500">
                   {t("planner.preview.kicker")}
@@ -311,10 +366,44 @@ export default function PlanOverviewPage() {
                   {t("planner.preview.title")}
                 </h3>
               </div>
-              <span className="text-sm font-semibold text-slate-500">
-                {t("planner.preview.meta", { days: rows.length })}
-              </span>
+              <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                <span className="text-sm font-semibold text-slate-500">
+                  {t("planner.preview.meta", { days: rows.length })}
+                </span>
+                <button
+                  type="button"
+                  onClick={handleDeletePlan}
+                  disabled={disableDeleteButton}
+                  className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-sm font-semibold transition ${
+                    deleteConfirm
+                      ? "border-red-300 bg-red-50 text-red-700"
+                      : "border-red-200 bg-white text-red-700 hover:border-red-300 hover:bg-red-50"
+                  } disabled:cursor-not-allowed disabled:opacity-60`}
+                >
+                  {isDeleting
+                    ? t("overview.deleting")
+                    : deleteConfirm
+                      ? t("overview.deleteConfirm")
+                      : t("overview.delete")}
+                </button>
+              </div>
             </div>
+            {deleteConfirm ? (
+              <p className="text-sm font-semibold text-red-600">
+                {t("overview.deleteHint")}
+              </p>
+            ) : null}
+            {deleteFeedback ? (
+              <div
+                className={`rounded-xl border px-4 py-3 text-sm font-semibold ${
+                  deleteFeedback.type === "success"
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-red-200 bg-red-50 text-red-700"
+                }`}
+              >
+                {deleteFeedback.message}
+              </div>
+            ) : null}
 
             <div className="overflow-hidden rounded-2xl border border-slate-100">
               {isLoading ? (

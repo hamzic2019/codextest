@@ -202,6 +202,12 @@ const translations = {
   "overview.loadError": "Could not load the plan.",
   "overview.loading": "Loading plan...",
   "overview.noPlan": "No saved plan for this month.",
+  "overview.delete": "Delete plan",
+  "overview.deleteConfirm": "Confirm delete",
+  "overview.deleteHint": "Click once more to delete this month's plan.",
+  "overview.deleting": "Deleting...",
+  "overview.deleteSuccess": "Plan deleted.",
+  "overview.deleteError": "Could not delete the plan.",
 } as const;
 
 export default translations;

@@ -202,6 +202,12 @@ const translations = {
   "overview.loadError": "Plan konnte nicht geladen werden.",
   "overview.loading": "Plan wird geladen...",
   "overview.noPlan": "Kein gespeicherter Plan für diesen Monat.",
+  "overview.delete": "Plan löschen",
+  "overview.deleteConfirm": "Löschen bestätigen",
+  "overview.deleteHint": "Klicke erneut, um den Plan für diesen Monat zu löschen.",
+  "overview.deleting": "Lösche...",
+  "overview.deleteSuccess": "Plan wurde gelöscht.",
+  "overview.deleteError": "Plan konnte nicht gelöscht werden.",
 } as const;
 
 export default translations;

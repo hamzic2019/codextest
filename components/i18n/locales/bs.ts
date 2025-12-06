@@ -202,6 +202,12 @@ const translations = {
   "overview.loadError": "Greška pri učitavanju plana.",
   "overview.loading": "Učitavam plan...",
   "overview.noPlan": "Nema spremljenog plana za ovaj mjesec.",
+  "overview.delete": "Obriši plan",
+  "overview.deleteConfirm": "Potvrdi brisanje",
+  "overview.deleteHint": "Klikni još jednom da obrišeš plan za ovaj mjesec.",
+  "overview.deleting": "Brišem...",
+  "overview.deleteSuccess": "Plan je obrisan.",
+  "overview.deleteError": "Greška pri brisanju plana.",
 } as const;
 
 export default translations;

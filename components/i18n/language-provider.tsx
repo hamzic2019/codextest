@@ -210,6 +210,12 @@ const translations = {
     "overview.loadError": "Greška pri učitavanju plana.",
     "overview.loading": "Učitavam plan...",
     "overview.noPlan": "Nema spremljenog plana za ovaj mjesec.",
+    "overview.delete": "Obriši plan",
+    "overview.deleteConfirm": "Potvrdi brisanje",
+    "overview.deleteHint": "Klikni još jednom da obrišeš plan za ovaj mjesec.",
+    "overview.deleting": "Brišem...",
+    "overview.deleteSuccess": "Plan je obrisan.",
+    "overview.deleteError": "Greška pri brisanju plana.",
   },
   en: {
     "language.bs": "Bosnian",
@@ -409,6 +415,12 @@ const translations = {
     "overview.loadError": "Could not load the plan.",
     "overview.loading": "Loading plan...",
     "overview.noPlan": "No saved plan for this month.",
+    "overview.delete": "Delete plan",
+    "overview.deleteConfirm": "Confirm delete",
+    "overview.deleteHint": "Click once more to delete this month's plan.",
+    "overview.deleting": "Deleting...",
+    "overview.deleteSuccess": "Plan deleted.",
+    "overview.deleteError": "Could not delete the plan.",
   },
   de: {
     "language.bs": "Bosnisch",
@@ -608,6 +620,12 @@ const translations = {
     "overview.loadError": "Plan konnte nicht geladen werden.",
     "overview.loading": "Plan wird geladen...",
     "overview.noPlan": "Kein gespeicherter Plan für diesen Monat.",
+    "overview.delete": "Plan löschen",
+    "overview.deleteConfirm": "Löschen bestätigen",
+    "overview.deleteHint": "Klicke erneut, um den Plan für diesen Monat zu löschen.",
+    "overview.deleting": "Lösche...",
+    "overview.deleteSuccess": "Plan wurde gelöscht.",
+    "overview.deleteError": "Plan konnte nicht gelöscht werden.",
   },
 } satisfies Record<Language, Record<string, string>>;
 

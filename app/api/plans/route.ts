@@ -192,3 +192,53 @@ export async function POST(request: Request) {
     );
   }
 }
+
+export async function DELETE(request: Request) {
+  try {
+    const url = new URL(request.url);
+    const patientId = url.searchParams.get("patientId");
+    const monthParam = url.searchParams.get("month");
+    const yearParam = url.searchParams.get("year");
+
+    const month = Number(monthParam);
+    const year = Number(yearParam);
+
+    if (!patientId || Number.isNaN(month) || Number.isNaN(year)) {
+      return NextResponse.json(
+        { error: "patientId, month i year su obavezni parametri za brisanje." },
+        { status: 400 }
+      );
+    }
+
+    const supabase = createServiceSupabaseClient();
+
+    const { data: existing, error: fetchError } = await supabase
+      .from("plans")
+      .select("id")
+      .eq("patient_id", patientId)
+      .eq("month", month)
+      .eq("year", year)
+      .maybeSingle();
+
+    if (fetchError) throw fetchError;
+
+    if (!existing) {
+      return NextResponse.json({ data: null });
+    }
+
+    const { error: deleteError } = await supabase
+      .from("plans")
+      .delete()
+      .eq("id", existing.id);
+
+    if (deleteError) throw deleteError;
+
+    return NextResponse.json({ data: { success: true } });
+  } catch (error) {
+    console.error("DELETE /api/plans error", error);
+    return NextResponse.json(
+      { error: "Greška pri brisanju plana." },
+      { status: 500 }
+    );
+  }
+}
