@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ChevronDown,
@@ -129,6 +129,7 @@ function WorkerSearchSelect({
   const [query, setQuery] = useState("");
   const wrapperRef = useRef<HTMLDivElement>(null);
   const [menuStyle, setMenuStyle] = useState<React.CSSProperties | null>(null);
+  const rafRef = useRef<number | null>(null);
   const statusLabels = useMemo(
     () => ({
       radnik: t("planner.worker.status.radnik"),
@@ -169,8 +170,15 @@ function WorkerSearchSelect({
 
   useEffect(() => {
     if (!open || !wrapperRef.current) return;
+    const cancelFrame = () => {
+      if (rafRef.current) {
+        cancelAnimationFrame(rafRef.current);
+        rafRef.current = null;
+      }
+    };
     const updatePosition = () => {
-      const rect = wrapperRef.current!.getBoundingClientRect();
+      if (!wrapperRef.current) return;
+      const rect = wrapperRef.current.getBoundingClientRect();
       const viewportWidth = window.innerWidth;
       const maxLeft = viewportWidth - rect.width - 16;
       const clampedLeft = Math.max(12, Math.min(rect.left, maxLeft));
@@ -182,12 +190,21 @@ function WorkerSearchSelect({
         zIndex: 9900000,
       });
     };
+    const scheduleUpdate = () => {
+      if (rafRef.current) return;
+      rafRef.current = requestAnimationFrame(() => {
+        rafRef.current = null;
+        updatePosition();
+      });
+    };
+
     updatePosition();
-    window.addEventListener("resize", updatePosition);
-    window.addEventListener("scroll", updatePosition, true);
+    window.addEventListener("resize", scheduleUpdate, { passive: true });
+    window.addEventListener("scroll", scheduleUpdate, { passive: true });
     return () => {
-      window.removeEventListener("resize", updatePosition);
-      window.removeEventListener("scroll", updatePosition, true);
+      cancelFrame();
+      window.removeEventListener("resize", scheduleUpdate);
+      window.removeEventListener("scroll", scheduleUpdate);
     };
   }, [open]);
 
@@ -300,11 +317,150 @@ function WorkerSearchSelect({
               }
             `}</style>
           </div>,
-          document.body
-        )}
-    </div>
+      document.body
+    )}
+  </div>
   );
 }
+
+type WorkerCardProps = {
+  worker: Worker;
+  preference: WorkerPreference;
+  t: ReturnType<typeof useTranslations>["t"];
+  statusLabels: Record<Worker["status"], string>;
+  onUpdate: (workerId: string, updates: Partial<Omit<WorkerPreference, "workerId">>) => void;
+  onRemove: (workerId: string) => void;
+};
+
+const WorkerCard = memo(function WorkerCard({
+  worker,
+  preference,
+  t,
+  statusLabels,
+  onUpdate,
+  onRemove,
+}: WorkerCardProps) {
+  const focusLabel =
+    preference.ratio === 50
+      ? t("planner.worker.focusBalanced")
+      : preference.ratio > 50
+        ? t("planner.worker.focusDay", { percent: preference.ratio })
+        : t("planner.worker.focusNight", { percent: 100 - preference.ratio });
+
+  const sliderPrimary = "#0ea5e9";
+  const sliderBase = "#e2e8f0";
+  const textMutedClass = "text-slate-500";
+  const chipClass = "border-slate-200 bg-slate-50 text-slate-700";
+  const priorityClass = preference.priority
+    ? "border-amber-200 bg-amber-50 text-amber-800"
+    : "border-slate-200 bg-white text-slate-600 hover:border-slate-300";
+  const controlSurface = "border-slate-200 bg-white text-slate-700";
+  const cardContainerClass =
+    "rounded-2xl border border-border/70 bg-white p-5 shadow-sm";
+
+  return (
+    <div className={cardContainerClass}>
+      <div className="relative flex items-start gap-3">
+        <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white">
+          {initials(worker.name)}
+        </div>
+        <div className="flex-1 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
+            <p className="text-base font-semibold text-slate-900">
+              {worker.name}
+            </p>
+            <span
+              className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${chipClass}`}
+            >
+              {worker.city}
+            </span>
+            <Badge variant={statusVariant(worker.status)}>
+              {statusLabels[worker.status] ?? worker.status}
+            </Badge>
+            <button
+              type="button"
+              onClick={() => onRemove(preference.workerId)}
+              className="ml-auto inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
+              aria-label={t("planner.worker.removeAria")}
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </div>
+          <p className={`text-xs ${textMutedClass}`}>
+            {focusLabel}
+          </p>
+        </div>
+      </div>
+
+      <div className="relative mt-5 space-y-4 rounded-2xl border border-slate-100 bg-slate-50/80 p-4">
+        <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em]">
+          <span className={textMutedClass}>{t("planner.worker.shiftFocus")}</span>
+          <span className="text-slate-700">{focusLabel}</span>
+        </div>
+        <input
+          type="range"
+          min={0}
+          max={100}
+          value={preference.ratio}
+          onChange={(event) =>
+            onUpdate(preference.workerId, { ratio: Number(event.target.value) })
+          }
+          className="h-3 w-full cursor-pointer appearance-none rounded-full"
+          style={{
+            background: `linear-gradient(90deg, ${sliderPrimary} ${preference.ratio}%, ${sliderBase} ${preference.ratio}%)`,
+          }}
+        />
+        <div className="flex items-center justify-between text-xs">
+          <span className={textMutedClass}>
+            Pomjeri slider prema dnevnim ili noćnim smjenama.
+          </span>
+          <span className="text-sm font-semibold text-slate-900">
+            {preference.ratio}%
+          </span>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label
+            className={`flex items-center gap-3 rounded-xl border px-3 py-3 text-xs font-semibold ${controlSurface}`}
+          >
+            <Clock className="h-4 w-4" />
+            <span className="uppercase tracking-[0.12em]">
+              {t("planner.worker.planDays")}
+            </span>
+            <input
+              type="number"
+              min={1}
+              max={31}
+              value={preference.days}
+              onChange={(event) =>
+                onUpdate(preference.workerId, { days: Number(event.target.value) || 1 })
+              }
+              className="ml-auto w-16 rounded-lg border border-slate-200 bg-white px-2 py-1 text-right text-sm font-semibold text-slate-900 focus:border-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-100"
+            />
+          </label>
+          <button
+            type="button"
+            onClick={() => onUpdate(preference.workerId, { priority: !preference.priority })}
+            aria-pressed={preference.priority}
+            className={`flex items-center justify-between rounded-xl border px-3 py-3 text-xs font-semibold transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 ${controlSurface}`}
+          >
+            <span className="uppercase tracking-[0.12em]">
+              {t("planner.worker.priority")}
+            </span>
+            <span
+              className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold ${priorityClass}`}
+            >
+              <Star className="h-3.5 w-3.5" />
+              {preference.priority ? "On" : "Off"}
+            </span>
+          </button>
+        </div>
+        <p className={`text-[11px] ${textMutedClass}`}>
+          0% = samo noćne, 100% = samo dnevne · Planiraj dane po želji.
+        </p>
+      </div>
+    </div>
+  );
+});
 
 function ShiftDropdownCell({
   shift,
@@ -811,33 +967,39 @@ export function PlannerWizard() {
     };
   }, [selectedWorkers, workerById, workers]);
 
-  const upsertWorker = (workerId: string) => {
-    setSelectedWorkers((prev) => {
-      if (prev.some((worker) => worker.workerId === workerId)) return prev;
-      const meta = workerById.get(workerId);
-      return [
-        ...prev,
-        meta
-          ? preferenceFromWorker(meta)
-          : { workerId, allowDay: true, allowNight: true, ratio: 50, days: 7, priority: false },
-      ];
-    });
-  };
+  const upsertWorker = useCallback(
+    (workerId: string) => {
+      setSelectedWorkers((prev) => {
+        if (prev.some((worker) => worker.workerId === workerId)) return prev;
+        const meta = workerById.get(workerId);
+        return [
+          ...prev,
+          meta
+            ? preferenceFromWorker(meta)
+            : { workerId, allowDay: true, allowNight: true, ratio: 50, days: 7, priority: false },
+        ];
+      });
+    },
+    [workerById]
+  );
 
-  const updateWorker = (
-    workerId: string,
-    updates: Partial<Omit<WorkerPreference, "workerId">>
-  ) => {
-    setSelectedWorkers((prev) =>
-      prev.map((item) =>
-        item.workerId === workerId ? { ...item, ...updates } : item
-      )
-    );
-  };
+  const updateWorker = useCallback(
+    (
+      workerId: string,
+      updates: Partial<Omit<WorkerPreference, "workerId">>
+    ) => {
+      setSelectedWorkers((prev) =>
+        prev.map((item) =>
+          item.workerId === workerId ? { ...item, ...updates } : item
+        )
+      );
+    },
+    []
+  );
 
-  const removeWorker = (workerId: string) => {
+  const removeWorker = useCallback((workerId: string) => {
     setSelectedWorkers((prev) => prev.filter((item) => item.workerId !== workerId));
-  };
+  }, []);
 
   const previewRows = useMemo<PreviewRow[]>(() => {
     const fallbackWorker: Worker = {
@@ -1177,122 +1339,16 @@ export function PlannerWizard() {
           {selectedWorkers.map((item) => {
             const worker = workerById.get(item.workerId);
             if (!worker) return null;
-            const focusLabel =
-              item.ratio === 50
-                ? t("planner.worker.focusBalanced")
-                : item.ratio > 50
-                  ? t("planner.worker.focusDay", { percent: item.ratio })
-                  : t("planner.worker.focusNight", { percent: 100 - item.ratio });
-
-            const sliderPrimary = "#0ea5e9";
-            const sliderBase = "#e2e8f0";
-            const textMutedClass = "text-slate-500";
-            const chipClass = "border-slate-200 bg-slate-50 text-slate-700";
-            const priorityClass = item.priority
-              ? "border-amber-200 bg-amber-50 text-amber-800"
-              : "border-slate-200 bg-white text-slate-600 hover:border-slate-300";
-            const controlSurface = "border-slate-200 bg-white text-slate-700";
-            const cardContainerClass =
-              "rounded-2xl border border-border/70 bg-white p-5 shadow-[0_14px_40px_rgba(15,23,42,0.06)]";
-
             return (
-              <div key={item.workerId} className={cardContainerClass}>
-                <div className="relative flex items-start gap-3">
-                  <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-slate-900 text-sm font-semibold text-white">
-                    {initials(worker.name)}
-                  </div>
-                  <div className="flex-1 space-y-1">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-base font-semibold text-slate-900">
-                        {worker.name}
-                      </p>
-                      <span
-                        className={`inline-flex items-center gap-1 rounded-full border px-3 py-1 text-[11px] font-semibold uppercase tracking-wide ${chipClass}`}
-                      >
-                        {worker.city}
-                      </span>
-                      <button
-                        type="button"
-                        onClick={() => removeWorker(item.workerId)}
-                        className="ml-auto inline-flex h-9 w-9 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-400 transition hover:border-red-200 hover:bg-red-50 hover:text-red-600"
-                        aria-label={t("planner.worker.removeAria")}
-                      >
-                        <X className="h-4 w-4" />
-                      </button>
-                    </div>
-                    <p className={`text-xs ${textMutedClass}`}>
-                      {focusLabel}
-                    </p>
-                  </div>
-                </div>
-
-                <div className="relative mt-5 space-y-4 rounded-2xl border border-slate-100 bg-slate-50/80 p-4">
-                  <div className="flex items-center justify-between text-[11px] font-semibold uppercase tracking-[0.18em]">
-                    <span className={textMutedClass}>{t("planner.worker.shiftFocus")}</span>
-                    <span className="text-slate-700">{focusLabel}</span>
-                  </div>
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    value={item.ratio}
-                    onChange={(event) =>
-                      updateWorker(item.workerId, { ratio: Number(event.target.value) })
-                    }
-                    className="h-3 w-full cursor-pointer appearance-none rounded-full"
-                    style={{
-                      background: `linear-gradient(90deg, ${sliderPrimary} ${item.ratio}%, ${sliderBase} ${item.ratio}%)`,
-                    }}
-                  />
-                  <div className="flex items-center justify-between text-xs">
-                    <span className={textMutedClass}>
-                      Pomjeri slider prema dnevnim ili noćnim smjenama.
-                    </span>
-                    <span className="text-sm font-semibold text-slate-900">
-                      {item.ratio}%
-                    </span>
-                  </div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                    <label
-                      className={`flex items-center gap-3 rounded-xl border px-3 py-3 text-xs font-semibold ${controlSurface}`}
-                    >
-                      <Clock className="h-4 w-4" />
-                      <span className="uppercase tracking-[0.12em]">
-                        {t("planner.worker.planDays")}
-                      </span>
-                      <input
-                        type="number"
-                        min={1}
-                        max={31}
-                        value={item.days}
-                        onChange={(event) =>
-                          updateWorker(item.workerId, { days: Number(event.target.value) || 1 })
-                        }
-                        className="ml-auto w-16 rounded-lg border border-slate-200 bg-white px-2 py-1 text-right text-sm font-semibold text-slate-900 focus:border-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-100"
-                      />
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => updateWorker(item.workerId, { priority: !item.priority })}
-                      aria-pressed={item.priority}
-                      className={`flex items-center justify-between rounded-xl border px-3 py-3 text-xs font-semibold transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 ${controlSurface}`}
-                    >
-                      <span className="uppercase tracking-[0.12em]">
-                        {t("planner.worker.priority")}
-                      </span>
-                      <span
-                        className={`inline-flex items-center gap-2 rounded-full border px-3 py-1 text-[11px] font-semibold ${priorityClass}`}
-                      >
-                        <Star className="h-3.5 w-3.5" />
-                        {item.priority ? "On" : "Off"}
-                      </span>
-                    </button>
-                  </div>
-                  <p className={`text-[11px] ${textMutedClass}`}>
-                    0% = samo noćne, 100% = samo dnevne · Planiraj dane po želji.
-                  </p>
-                </div>
-              </div>
+              <WorkerCard
+                key={item.workerId}
+                worker={worker}
+                preference={item}
+                t={t}
+                statusLabels={statusLabels}
+                onUpdate={updateWorker}
+                onRemove={removeWorker}
+              />
             );
           })}
         </div>
