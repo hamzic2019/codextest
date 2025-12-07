@@ -490,6 +490,43 @@ function mapAssignmentsToArray(
   return rows;
 }
 
+function localEvaluateRestRule(
+  dateKey: string,
+  shift: ShiftType,
+  workerId: string,
+  assignments: Record<string, Record<ShiftType, string | null>>,
+  busyShifts: BusyShiftMap
+): { allowed: boolean; reason?: string } {
+  const entry = assignments[dateKey] ?? { day: null, night: null };
+  const otherShiftWorker = shift === "day" ? entry.night : entry.day;
+  if (otherShiftWorker && otherShiftWorker === workerId) {
+    return { allowed: false, reason: "same-day-other-shift" };
+  }
+
+  const busyEntry = busyShifts[dateKey] ?? { day: [], night: [] };
+  if ((busyEntry.day ?? []).includes(workerId) || (busyEntry.night ?? []).includes(workerId)) {
+    return { allowed: false, reason: "busy-same-day" };
+  }
+
+  const dateValue = new Date(dateKey);
+  const prevDate = new Date(dateValue);
+  prevDate.setDate(prevDate.getDate() - 1);
+  const prevDateKey = toDateKey(prevDate.getFullYear(), prevDate.getMonth(), prevDate.getDate());
+  const prevAssignments = assignments[prevDateKey];
+  const prevBusy = busyShifts[prevDateKey] ?? { day: [], night: [] };
+
+  if (shift === "day") {
+    if (prevAssignments?.night === workerId) {
+      return { allowed: false, reason: "night-to-day" };
+    }
+    if ((prevBusy.night ?? []).includes(workerId)) {
+      return { allowed: false, reason: "night-to-day" };
+    }
+  }
+
+  return { allowed: true };
+}
+
 function clampRequestedDays(days: number, daysInMonth: number) {
   if (Number.isNaN(days) || days < 1) return 1;
   // Max 2 shifts per day; keep cap to daysInMonth to avoid silly values.
@@ -904,16 +941,19 @@ export function PlannerWizard() {
   const assignWorker = (dateKey: string, shift: ShiftType, workerId: string) => {
     const lockState = shiftLocks[dateKey];
     if (lockState?.[shift]) return;
-    const busy = busyShifts[dateKey]?.[shift] ?? [];
-    const otherShift = shift === "day" ? assignments[dateKey]?.night : assignments[dateKey]?.day;
-    if (busy.includes(workerId)) {
-      setErrorMessage("Radnik je već zauzet na drugom planu za taj dan/smjenu.");
+    const restCheck = localEvaluateRestRule(dateKey, shift, workerId, assignments, busyShifts);
+    if (!restCheck.allowed) {
+      const reason = restCheck.reason;
+      if (reason === "same-day-other-shift" || reason === "busy-same-day") {
+        setErrorMessage("Radnik je već zauzet u drugoj smjeni tog dana.");
+      } else if (reason === "night-to-day") {
+        setErrorMessage("Radnik mora imati 12h odmora poslije noćne; ne može na dnevnu naredni dan.");
+      } else {
+        setErrorMessage("Smjena krši pravila odmora.");
+      }
       return;
     }
-    if (otherShift && otherShift === workerId) {
-      setErrorMessage("Isti radnik ne može biti i na dnevnoj i na noćnoj smjeni istog dana.");
-      return;
-    }
+
     setStatusMessage(null);
     setHasUnsavedChanges(true);
     setAssignments((prev) => ({

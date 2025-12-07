@@ -34,6 +34,11 @@ type WorkerState = {
   hardCap: number;
 };
 
+type WorkerShiftHistory = {
+  lastDay?: number;
+  lastType?: ShiftType;
+};
+
 type OpenAIPlanItem = {
   date: string;
   dayWorkerId?: string | null;
@@ -43,21 +48,17 @@ type OpenAIPlanItem = {
 
 type LockedShift = { date: string; shiftType: ShiftType };
 
-const MAX_CONSECUTIVE_DAYS = 4;
-const MAX_CONSECUTIVE_NIGHTS = 3;
-
 function toDateKey(year: number, month: number, day: number) {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-}
-
-function isWeekend(year: number, monthZeroBased: number, day: number) {
-  const weekday = new Date(year, monthZeroBased, day).getDay(); // 0=Sun
-  return weekday === 0 || weekday === 6;
 }
 
 function clamp(value: number, min: number, max: number) {
   if (Number.isNaN(value)) return min;
   return Math.max(min, Math.min(max, value));
+}
+
+function getDayFromDate(date: string) {
+  return Number(date.split("-")[2]);
 }
 
 function sanitizePreferences(preferences: WorkerPreference[], daysInMonth: number): SanitizedPreference[] {
@@ -190,86 +191,53 @@ function extractPlanAssignments(rawPlan: OpenAIPlanItem[], year: number, month: 
   return assignments;
 }
 
-function isRestOk(state: WorkerState, day: number, shift: "day" | "night") {
-  if (!state.lastDay) return true;
-  if (state.lastDay === day && state.lastType && state.lastType !== shift) return false; // no 24h
-  if (state.lastType === "night" && state.lastDay === day - 1 && shift === "day") return false; // rest after night; night->day next day forbidden
-  return true;
+function evaluateRestRule(
+  history: WorkerShiftHistory | undefined,
+  workerId: string,
+  day: number,
+  shift: ShiftType,
+  entry: { day?: string | null; night?: string | null },
+  busyEntry?: { day: Set<string>; night: Set<string> }
+): { allowed: boolean; reason?: string } {
+  const otherShiftWorker = shift === "day" ? entry.night : entry.day;
+  if (otherShiftWorker && otherShiftWorker === workerId) {
+    // Same worker već zauzet u drugoj smjeni istog dana.
+    return { allowed: false, reason: "same-day-other-shift" };
+  }
+
+  if (busyEntry) {
+    const busySameDay =
+      busyEntry.day.has(workerId) || busyEntry.night.has(workerId);
+    if (busySameDay) {
+      return { allowed: false, reason: "busy-same-day" };
+    }
+  }
+
+  if (history?.lastDay === day && history.lastType && history.lastType !== shift) {
+    // Already has another shift this calendar day.
+    return { allowed: false, reason: "same-day-two-shifts" };
+  }
+
+  if (history?.lastDay === day - 1 && history.lastType === "night" && shift === "day") {
+    // Night on X -> day on X+1 is forbidden (needs 12h rest).
+    return { allowed: false, reason: "night-to-day" };
+  }
+
+  return { allowed: true };
 }
 
-function wouldExceedConsecutive(state: WorkerState, day: number, shift: "day" | "night") {
-  if (!state.lastDay || state.lastDay !== day - 1 || state.lastType !== shift) return false;
-  const limit = shift === "night" ? MAX_CONSECUTIVE_NIGHTS : MAX_CONSECUTIVE_DAYS;
-  return state.streak + 1 > limit;
-}
-
-function applyAssignment(state: WorkerState, day: number, shift: "day" | "night") {
+function applyAssignment(state: WorkerState, day: number, shift: "day" | "night", countTowardsPlan = true) {
   const consecutive = state.lastDay === day - 1 && state.lastType === shift ? state.streak + 1 : 1;
   const next: WorkerState = {
     ...state,
-    assigned: state.assigned + 1,
-    assignedDay: state.assignedDay + (shift === "day" ? 1 : 0),
-    assignedNight: state.assignedNight + (shift === "night" ? 1 : 0),
+    assigned: state.assigned + (countTowardsPlan ? 1 : 0),
+    assignedDay: state.assignedDay + (countTowardsPlan && shift === "day" ? 1 : 0),
+    assignedNight: state.assignedNight + (countTowardsPlan && shift === "night" ? 1 : 0),
     lastDay: day,
     lastType: shift,
     streak: consecutive,
   };
   return next;
-}
-
-function isValidCandidate(
-  worker: WorkerState,
-  day: number,
-  shift: "day" | "night",
-  existingDay: string | null | undefined,
-  busyWorkers: Set<string> | undefined,
-  respectCaps: boolean
-) {
-  if (busyWorkers?.has(worker.id)) return false;
-  if (existingDay && existingDay === worker.id) return false;
-  if (shift === "day" && !worker.allowDay) return false;
-  if (shift === "night" && !worker.allowNight) return false;
-  if (!isRestOk(worker, day, shift)) return false;
-  if (wouldExceedConsecutive(worker, day, shift)) return false;
-  if (respectCaps) {
-    const softCap = Math.max(worker.softCap, worker.targetDays + 3);
-    if (worker.assigned >= softCap) return false;
-    const shiftCap = shift === "day" ? worker.targetDay + 2 : worker.targetNight + 2;
-    const assignedForShift = shift === "day" ? worker.assignedDay : worker.assignedNight;
-    if (assignedForShift >= shiftCap) return false;
-  }
-  return true;
-}
-
-function scoreCandidate(worker: WorkerState, day: number, shift: "day" | "night", daysInMonth: number, weekend: boolean) {
-  const remaining = Math.max(worker.targetDays - worker.assigned, 0);
-  const shiftNeed =
-    shift === "day"
-      ? Math.max(worker.targetDay - worker.assignedDay, 0)
-      : Math.max(worker.targetNight - worker.assignedNight, 0);
-  const priorityBoost = worker.priority ? 5 : 1;
-  const ratioBias =
-    worker.priority && worker.targetDays > 0
-      ? shift === "day"
-        ? Math.max(worker.ratio / 50, 1)
-        : Math.max((100 - worker.ratio) / 50, 1)
-      : 1;
-  const balancePref = shift === "day" ? worker.ratio : 100 - worker.ratio; // 0..100 (ratio is day %)
-  const balanceScore = balancePref / 50; // ~0..2
-  const distributionScore = 1 - Math.abs(day - daysInMonth / 2) / (daysInMonth / 2); // center-spread
-  const weekendPenalty = weekend ? 0.9 : 1;
-  const capPressure = worker.assigned >= worker.targetDays ? 0.6 : 1;
-  const priorityGapBoost = worker.priority && remaining > 0 ? Math.max(2, remaining * 0.5) : 1;
-  const fairness = worker.priority ? 1 : 1 / (1 + worker.assigned);
-  return (
-    (shiftNeed * 2 + remaining + distributionScore + fairness) *
-    priorityBoost *
-    ratioBias *
-    priorityGapBoost *
-    balanceScore *
-    weekendPenalty *
-    capPressure
-  );
 }
 
 function buildEmptySchedule(daysInMonth: number) {
@@ -278,30 +246,6 @@ function buildEmptySchedule(daysInMonth: number) {
     schedule.set(day, { day: null, night: null });
   }
   return schedule;
-}
-
-function mapAssignmentsToSchedule(assignments: PlanAssignment[]) {
-  const schedule = new Map<number, { day?: string | null; night?: string | null }>();
-  assignments.forEach((assignment) => {
-    const day = Number(assignment.date.split("-")[2]);
-    const entry = schedule.get(day) ?? {};
-    entry[assignment.shiftType] = assignment.workerId ?? null;
-    schedule.set(day, entry);
-  });
-  return schedule;
-}
-
-function isAssignmentValid(
-  worker: WorkerState,
-  day: number,
-  shift: "day" | "night",
-  entry: { day?: string | null; night?: string | null },
-  busyWorkers: Set<string> | undefined
-) {
-  if (shift === "day" && entry.day && entry.day !== worker.id) return false;
-  if (shift === "night" && entry.night && entry.night !== worker.id) return false;
-  const otherShiftWorker = shift === "day" ? entry.night : entry.day;
-  return isValidCandidate(worker, day, shift, otherShiftWorker, busyWorkers, true);
 }
 
 function buildSchedule(
@@ -322,31 +266,15 @@ function buildSchedule(
     const hardCap = Math.max(softCap + 4, pref.targetDays + 6);
     return { ...pref, targetDay, targetNight, softCap, hardCap };
   });
+  const selectedIds = new Set(normalizedPrefs.map((pref) => pref.workerId));
   const schedule = buildEmptySchedule(daysInMonth);
+  const historyById = new Map<string, WorkerShiftHistory>();
 
-  // Seed locked assignments first; they are immutable.
-  lockedAssignments.forEach((assignment) => {
-    const day = Number(assignment.date.split("-")[2]);
-    const entry = schedule.get(day) ?? {};
-    entry[assignment.shiftType] = assignment.workerId ?? null;
-    schedule.set(day, entry);
-  });
-
-  // Apply AI assignments if not locked.
-  aiAssignments.forEach((assignment) => {
-    const day = Number(assignment.date.split("-")[2]);
-    const locked = lockedMap.get(day);
-    if (locked?.[assignment.shiftType]) return;
-    const entry = schedule.get(day) ?? {};
-    entry[assignment.shiftType] = assignment.workerId ?? null;
-    schedule.set(day, entry);
-  });
-
-  const busyByDay = new Map<number, Set<string>>();
+  const busyByDay = new Map<number, { day: Set<string>; night: Set<string> }>();
   busyAssignments.forEach((assignment) => {
-    const day = Number(assignment.date.split("-")[2]);
-    if (!busyByDay.has(day)) busyByDay.set(day, new Set());
-    if (assignment.workerId) busyByDay.get(day)!.add(assignment.workerId);
+    const day = getDayFromDate(assignment.date);
+    if (!busyByDay.has(day)) busyByDay.set(day, { day: new Set(), night: new Set() });
+    if (assignment.workerId) busyByDay.get(day)![assignment.shiftType].add(assignment.workerId);
   });
 
   const stateById = new Map<string, WorkerState>();
@@ -369,162 +297,145 @@ function buildSchedule(
     });
   });
 
-  // Validate AI assignments and drop invalid ones.
+  // Seed locked assignments; keep them and count toward worker load.
+  lockedAssignments.forEach((assignment) => {
+    const day = getDayFromDate(assignment.date);
+    const entry = schedule.get(day) ?? {};
+    entry[assignment.shiftType] = assignment.workerId ?? null;
+    schedule.set(day, entry);
+  });
+
+  // Apply AI suggestions if present and not locked.
+  aiAssignments.forEach((assignment) => {
+    const day = getDayFromDate(assignment.date);
+    if (lockedMap.get(day)?.[assignment.shiftType]) return;
+    const entry = schedule.get(day) ?? {};
+    entry[assignment.shiftType] = assignment.workerId ?? null;
+    schedule.set(day, entry);
+  });
+
+  const scoreCandidateSimple = (worker: WorkerState, shift: "day" | "night") => {
+    const totalRemaining = Math.max(worker.targetDays - worker.assigned, 0);
+    const shiftRemaining =
+      shift === "day"
+        ? Math.max(worker.targetDay - worker.assignedDay, 0)
+        : Math.max(worker.targetNight - worker.assignedNight, 0);
+    const fairness = 1 / (1 + worker.assigned);
+    const priorityBoost = worker.priority ? 2 : 1;
+    return shiftRemaining * 5 + totalRemaining * 2 + fairness * 3 * priorityBoost;
+  };
+
+  const ensureStateForWorker = (workerId: string) => {
+    if (stateById.has(workerId)) return stateById.get(workerId)!;
+    const placeholder: WorkerState = {
+      id: workerId,
+      targetDays: 0,
+      targetDay: 0,
+      targetNight: 0,
+      assigned: 0,
+      assignedDay: 0,
+      assignedNight: 0,
+      priority: false,
+      allowDay: true,
+      allowNight: true,
+      ratio: 50,
+      streak: 0,
+      softCap: totalSlots,
+      hardCap: totalSlots,
+    };
+    stateById.set(workerId, placeholder);
+    return placeholder;
+  };
+
+  const recordHistory = (workerId: string, day: number, shift: ShiftType) => {
+    const next: WorkerShiftHistory = { lastDay: day, lastType: shift };
+    historyById.set(workerId, next);
+  };
+
+  const canWork = (
+    worker: WorkerState,
+    day: number,
+    shift: ShiftType,
+    entry: { day?: string | null; night?: string | null },
+    busyEntry: { day: Set<string>; night: Set<string> }
+  ) => {
+    if (!selectedIds.has(worker.id)) return false;
+    if (shift === "day" && !worker.allowDay) return false;
+    if (shift === "night" && !worker.allowNight) return false;
+    if (busyEntry[shift].has(worker.id)) return false;
+    const rest = evaluateRestRule(historyById.get(worker.id), worker.id, day, shift, entry, busyEntry);
+    if (!rest.allowed) return false;
+    return true;
+  };
+
+  // Validate seeded (locked/AI) assignments and fill gaps in one forward pass to keep history coherent.
   for (let day = 1; day <= daysInMonth; day++) {
+    const busyEntry = busyByDay.get(day) ?? { day: new Set<string>(), night: new Set<string>() };
     const entry = schedule.get(day) ?? { day: null, night: null };
+
+    // Busy smjene se računaju u historiju odmora (bez povećanja plana).
     (["day", "night"] as const).forEach((shift) => {
-      if (lockedMap.get(day)?.[shift]) return;
+      busyEntry[shift].forEach((workerId) => {
+        const worker = stateById.get(workerId);
+        if (worker) {
+          stateById.set(workerId, applyAssignment(worker, day, shift, false));
+        }
+        recordHistory(workerId, day, shift);
+      });
+    });
+
+    // Validiraj već postavljene (locked/AI) smjene.
+    (["day", "night"] as const).forEach((shift) => {
       const workerId = entry[shift];
       if (!workerId) return;
-      const worker = stateById.get(workerId);
-      if (!worker) {
-        entry[shift] = null;
+      const worker = ensureStateForWorker(workerId);
+      const rest = evaluateRestRule(historyById.get(workerId), workerId, day, shift, entry, busyEntry);
+      if (!rest.allowed) {
+        entry[shift] = null; // čak i ako je locked, pravilo odmora pobjeđuje
         return;
       }
-      const valid = isAssignmentValid(worker, day, shift, entry, busyByDay.get(day));
-      if (!valid) {
-        entry[shift] = null;
-      } else {
-        const nextState = applyAssignment(worker, day, shift);
-        stateById.set(workerId, nextState);
-      }
-    });
-    schedule.set(day, entry);
-  }
-
-  // Fill remaining slots day-by-day.
-  for (let day = 1; day <= daysInMonth; day++) {
-    const weekend = isWeekend(year, monthZeroBased, day);
-    const entry = schedule.get(day) ?? { day: null, night: null };
-
-    (["day", "night"] as const).forEach((shift) => {
-      if (lockedMap.get(day)?.[shift]) return;
-      if (shift === "day" && entry.day) return;
-      if (shift === "night" && entry.night) return;
-
-      const busyWorkers = busyByDay.get(day);
-      const candidates = normalizedPrefs
-        .map((pref) => stateById.get(pref.workerId)!)
-        .filter((worker) =>
-          isValidCandidate(
-            worker,
-            day,
-            shift,
-            shift === "day" ? entry.night : entry.day,
-            busyWorkers,
-            true
-          )
-        );
-
-      if (candidates.length === 0) return;
-
-      const priorityPool = candidates.filter(
-        (worker) => worker.priority && worker.assigned < worker.targetDays
-      );
-      const pool = priorityPool.length > 0 ? priorityPool : candidates;
-
-      const best = pool
-        .map((worker) => ({
-          worker,
-          score: scoreCandidate(worker, day, shift, daysInMonth, weekend),
-        }))
-        .sort((a, b) => b.score - a.score)[0];
-
-      if (!best) return;
-
-      const nextState = applyAssignment(best.worker, day, shift);
-      stateById.set(best.worker.id, nextState);
-      if (shift === "day") entry.day = best.worker.id;
-      else entry.night = best.worker.id;
+      stateById.set(workerId, applyAssignment(worker, day, shift));
+      recordHistory(workerId, day, shift);
     });
 
-    schedule.set(day, entry);
-  }
-
-  // Second pass: fill remaining slots with relaxed caps (still respecting rest/busy rules).
-  for (let day = 1; day <= daysInMonth; day++) {
-    const weekend = isWeekend(year, monthZeroBased, day);
-    const entry = schedule.get(day) ?? { day: null, night: null };
-    const busyWorkers = busyByDay.get(day);
-
+    // Popuni praznine.
     (["day", "night"] as const).forEach((shift) => {
-      if (lockedMap.get(day)?.[shift]) return;
-      if (shift === "day" && entry.day) return;
-      if (shift === "night" && entry.night) return;
+      if (entry[shift]) return;
+      if (lockedMap.get(day)?.[shift]) return; // zaključano, ali prazno => ostaje prazno
 
       const candidates = normalizedPrefs
-        .map((pref) => stateById.get(pref.workerId)!)
-        .filter((worker) => {
-          // Hard cap only to avoid pathological overloads.
-          if (worker.assigned >= worker.hardCap) return false;
-          return isValidCandidate(
-            worker,
-            day,
-            shift,
-            shift === "day" ? entry.night : entry.day,
-            busyWorkers,
-            false
-          );
-        });
+        .map((pref) => ensureStateForWorker(pref.workerId))
+        .filter((worker) => canWork(worker, day, shift, entry, busyEntry));
 
-      if (candidates.length === 0) return;
+      const pick = () => {
+        if (candidates.length === 0) return null;
+        const best = candidates
+          .map((worker) => ({ worker, score: scoreCandidateSimple(worker, shift) }))
+          .sort((a, b) => b.score - a.score)[0];
+        if (!best) return null;
+        return best.worker;
+      };
 
-      const priorityPool = candidates.filter(
-        (worker) => worker.priority && worker.assigned < worker.targetDays
-      );
-      const pool = priorityPool.length > 0 ? priorityPool : candidates;
+      let chosen = pick();
 
-      const best = pool
-        .map((worker) => ({
-          worker,
-          score: scoreCandidate(worker, day, shift, daysInMonth, weekend),
-        }))
-        .sort((a, b) => b.score - a.score)[0];
-
-      if (!best) return;
-
-      const nextState = applyAssignment(best.worker, day, shift);
-      stateById.set(best.worker.id, nextState);
-      if (shift === "day") entry.day = best.worker.id;
-      else entry.night = best.worker.id;
-    });
-
-    schedule.set(day, entry);
-  }
-
-  // Guarantee everyone gets at least one shift if possible via swaps.
-  const unassigned = normalizedPrefs.filter((pref) => (stateById.get(pref.workerId)?.assigned ?? 0) === 0);
-  for (const pref of unassigned) {
-  for (let day = 1; day <= daysInMonth; day++) {
-    const entry = schedule.get(day)!;
-    const shifts: ("day" | "night")[] = ["day", "night"];
-    let placed = false;
-    for (const shift of shifts) {
-      const currentId = entry[shift];
-      if (!currentId) continue;
-      const currentState = stateById.get(currentId)!;
-      const candidateState = stateById.get(pref.workerId)!;
-      // Try swap if candidate can take it and current can be removed.
-      if (
-          isValidCandidate(
-            candidateState,
-            day,
-            shift,
-            shift === "day" ? entry.night : entry.day,
-            busyByDay.get(day),
-            true
-          ) &&
-          currentState.assigned > 1
-        ) {
-          entry[shift] = pref.workerId;
-          stateById.set(pref.workerId, applyAssignment(candidateState, day, shift));
-          stateById.set(currentId, { ...currentState, assigned: currentState.assigned - 1 });
-          placed = true;
-          break;
+      if (!chosen) {
+        const anyValid = normalizedPrefs
+          .map((pref) => ensureStateForWorker(pref.workerId))
+          .filter((worker) => canWork(worker, day, shift, entry, busyEntry));
+        if (anyValid.length > 0) {
+          chosen = anyValid.sort((a, b) => a.assigned - b.assigned)[0];
         }
       }
-      if (placed) break;
-    }
+
+      if (chosen) {
+        const nextState = applyAssignment(chosen, day, shift);
+        stateById.set(chosen.id, nextState);
+        entry[shift] = chosen.id;
+        recordHistory(chosen.id, day, shift);
+      }
+    });
+
+    schedule.set(day, entry);
   }
 
   const result: PlanAssignment[] = [];
@@ -550,6 +461,17 @@ function formatMeta(preferences: NormalizedPreference[], stateById: Map<string, 
   });
   return `Plan za ${daysInMonth} dana. Pokrivenost: ${perWorker.join("; ")}. ${notes.join(" ")}`.trim();
 }
+
+/*
+// Pseudotestovi za evaluateRestRule (dozvoljeno):
+// 9 day -> 10 day -> 11 day: allowed
+// 9 day -> 10 day -> 11 night: allowed
+// 9 day -> 10 night -> 11 night -> 12 day: allowed
+//
+// Zabranjeno:
+// day + night isti datum (same-day-other-shift)
+// 9 day -> 10 night -> 11 day (night-to-day blokira dnevnu na 11.)
+*/
 
 export async function POST(request: Request) {
   try {
@@ -646,7 +568,8 @@ Ti si planer smjena za njegu. Prvo ispoštuj prioritetne radnike (priority=true)
 Istovremeno svaki odabrani radnik treba dobiti barem nekoliko smjena; preostale smjene ravnopravno podijeli tako da niko ne ostane na 0 i da raspored izgleda fer.
 Moraš poštovati:
 - Nema 24h u komadu: isti radnik ne može dan pa noć isti dan.
-- Ako radi noć, sutradan može samo noć ili odmor (nema noć -> dan odmah sutradan). Ako radi dan, sutradan može dan ili noć.
+- Obaveznih 12h odmora nakon noćne: ako radi noć (npr. 10.), naredni kalendarski dan (11.) ne smije raditi dnevnu; može noć ili odmor. Tek dan poslije (12.) može opet dnevnu.
+- Ako radi dnevnu, sutradan može dnevnu ili noćnu.
 - Poštuj preferencije (day/night) i ratio; prioritetni radnici imaju prednost kod popune.
 - Ne planiraj "u cugu": izbjegavaj serije duže od 4-5 dana istog radnika; miješaj radnike kroz mjesec, uključujući vikende.
 - Koristi samo workerId iz liste. Ako baš nema radnika, ostavi null, ali pokušaj popuniti sve smjene.
