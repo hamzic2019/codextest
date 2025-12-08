@@ -47,6 +47,10 @@ type OpenAIPlanItem = {
 };
 
 type LockedShift = { date: string; shiftType: ShiftType };
+type AvailabilityBlock = {
+  day: boolean[];
+  night: boolean[];
+};
 
 function toDateKey(year: number, month: number, day: number) {
   return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
@@ -59,6 +63,54 @@ function clamp(value: number, min: number, max: number) {
 
 function getDayFromDate(date: string) {
   return Number(date.split("-")[2]);
+}
+
+function clampTargetsToAvailability(
+  preferences: SanitizedPreference[],
+  busyAssignments: PlanAssignment[],
+  year: number,
+  monthZeroBased: number,
+  daysInMonth: number
+) {
+  const blocked = new Map<string, AvailabilityBlock>();
+
+  const ensure = (workerId: string) => {
+    if (!blocked.has(workerId)) {
+      blocked.set(workerId, {
+        day: Array.from({ length: daysInMonth + 2 }, () => false),
+        night: Array.from({ length: daysInMonth + 2 }, () => false),
+      });
+    }
+    return blocked.get(workerId)!;
+  };
+
+  busyAssignments.forEach((assignment) => {
+    if (!assignment.workerId) return;
+    const day = getDayFromDate(assignment.date);
+    if (Number.isNaN(day) || day < 1 || day > daysInMonth) return;
+    const entry = ensure(assignment.workerId);
+    entry[assignment.shiftType][day] = true;
+    // Isti dan druga smjena takođe blokirana.
+    if (assignment.shiftType === "day") entry.night[day] = true;
+    if (assignment.shiftType === "night") {
+      entry.day[day] = true;
+      // 12h odmora: blokiraj dnevnu naredni dan.
+      if (day + 1 <= daysInMonth) {
+        entry.day[day + 1] = true;
+      }
+    }
+  });
+
+  return preferences.map((pref) => {
+    const entry = blocked.get(pref.workerId);
+    if (!entry) return pref;
+    let available = 0;
+    for (let day = 1; day <= daysInMonth; day++) {
+      if (!entry.day[day]) available += 1;
+      if (!entry.night[day]) available += 1;
+    }
+    return { ...pref, targetDays: Math.min(pref.targetDays, available) };
+  });
 }
 
 function sanitizePreferences(preferences: WorkerPreference[], daysInMonth: number): SanitizedPreference[] {
@@ -75,91 +127,35 @@ function sanitizePreferences(preferences: WorkerPreference[], daysInMonth: numbe
 function normalizeTargets(preferences: SanitizedPreference[], totalSlots: number): SanitizedPreference[] {
   if (preferences.length === 0) return preferences;
 
-  const capPref = (pref: SanitizedPreference) => ({
+  const capped = preferences.map((pref) => ({
     ...pref,
-    targetDays: Math.max(pref.priority ? 1 : 0, Math.min(pref.targetDays, totalSlots)),
+    targetDays: Math.max(0, Math.min(pref.targetDays, totalSlots)),
+  }));
+
+  const requested = capped.reduce((sum, pref) => sum + pref.targetDays, 0);
+  if (requested <= totalSlots) {
+    // Ne povećavamo traženi broj: ostaje gornja granica koju je korisnik zadao.
+    return capped;
+  }
+
+  const factor = totalSlots / requested;
+  const working = capped.map((pref) => {
+    const scaled = Math.floor(pref.targetDays * factor);
+    return { pref, current: Math.max(0, Math.min(scaled, pref.targetDays)) };
   });
 
-  const normalizeBucket = (
-    bucket: SanitizedPreference[],
-    targetTotal: number,
-    minPerItem: (pref: SanitizedPreference, bucketSize: number) => number
-  ) => {
-    if (bucket.length === 0) return bucket;
-    if (targetTotal <= 0) return bucket.map((pref) => ({ ...pref, targetDays: 0 }));
+  const currentTotal = working.reduce((sum, item) => sum + item.current, 0);
+  let remaining = totalSlots - currentTotal;
 
-    const requested = bucket.reduce((sum, pref) => sum + pref.targetDays, 0);
+  // Raspodijeli preostale slotove (ako ih ima zbog zaokruživanja) bez prelaska originalnog targeta.
+  while (remaining > 0) {
+    const candidate = working.find((item) => item.current < item.pref.targetDays);
+    if (!candidate) break;
+    candidate.current += 1;
+    remaining -= 1;
+  }
 
-    // Nothing requested: split evenly to cover slots.
-    if (requested === 0) {
-      const base = Math.floor(targetTotal / bucket.length);
-      const remainder = targetTotal - base * bucket.length;
-      return bucket.map((pref, index) => ({
-        ...pref,
-        targetDays: base + (index < remainder ? 1 : 0),
-      }));
-    }
-
-    const factor = targetTotal / requested;
-    const scaled = bucket.map((pref) => {
-      const minAllowed = Math.min(
-        targetTotal,
-        Math.max(minPerItem(pref, bucket.length), 0)
-      );
-      return {
-        ...pref,
-        targetDays: Math.max(minAllowed, Math.round(pref.targetDays * factor)),
-      };
-    });
-
-    let diff = targetTotal - scaled.reduce((sum, pref) => sum + pref.targetDays, 0);
-    if (diff === 0) return scaled;
-
-    const ordered = [...scaled].sort((a, b) => {
-      if (diff > 0) {
-        if (a.priority === b.priority) return a.targetDays - b.targetDays;
-        return a.priority ? -1 : 1;
-      }
-      if (a.priority === b.priority) return b.targetDays - a.targetDays;
-      return a.priority ? 1 : -1;
-    });
-
-    let idx = 0;
-    let safety = 1000;
-    while (diff !== 0 && safety > 0) {
-      const pref = ordered[idx % ordered.length];
-      const minAllowed = Math.min(
-        targetTotal,
-        Math.max(minPerItem(pref, ordered.length), 0)
-      );
-      if (diff > 0) {
-        pref.targetDays += 1;
-        diff -= 1;
-      } else if (pref.targetDays > minAllowed) {
-        pref.targetDays -= 1;
-        diff += 1;
-      }
-      idx += 1;
-      safety -= 1;
-    }
-
-    return ordered;
-  };
-
-  const priority = preferences.filter((pref) => pref.priority).map(capPref);
-  const nonPriority = preferences.filter((pref) => !pref.priority).map(capPref);
-
-  const priorityRequested = priority.reduce((sum, pref) => sum + pref.targetDays, 0);
-  const priorityTarget = Math.min(priorityRequested, totalSlots);
-  const normalizedPriority = normalizeBucket(priority, priorityTarget, (pref, size) =>
-    totalSlots >= size ? 1 : 0
-  );
-
-  const usedByPriority = normalizedPriority.reduce((sum, pref) => sum + pref.targetDays, 0);
-  const remainingSlots = Math.max(totalSlots - usedByPriority, 0);
-  const normalizedNonPriority = normalizeBucket(nonPriority, remainingSlots, () => 0);
-
-  return [...normalizedPriority, ...normalizedNonPriority];
+  return working.map((item) => ({ ...item.pref, targetDays: item.current }));
 }
 
 function extractPlanAssignments(rawPlan: OpenAIPlanItem[], year: number, month: number, daysInMonth: number): PlanAssignment[] {
@@ -262,8 +258,8 @@ function buildSchedule(
   const normalizedPrefs = normalizeTargets(preferences, totalSlots).map<NormalizedPreference>((pref) => {
     const targetDay = Math.round(pref.targetDays * (pref.ratio / 100));
     const targetNight = Math.max(pref.targetDays - targetDay, 0);
-    const softCap = Math.max(pref.targetDays + 3, Math.ceil(totalSlots / (preferences.length || 1)) + (pref.priority ? 3 : 2));
-    const hardCap = Math.max(softCap + 4, pref.targetDays + 6);
+    const softCap = pref.targetDays;
+    const hardCap = pref.targetDays;
     return { ...pref, targetDay, targetNight, softCap, hardCap };
   });
   const selectedIds = new Set(normalizedPrefs.map((pref) => pref.workerId));
@@ -301,7 +297,8 @@ function buildSchedule(
   lockedAssignments.forEach((assignment) => {
     const day = getDayFromDate(assignment.date);
     const entry = schedule.get(day) ?? {};
-    entry[assignment.shiftType] = assignment.workerId ?? null;
+    entry[assignment.shiftType] =
+      assignment.workerId && selectedIds.has(assignment.workerId) ? assignment.workerId : null;
     schedule.set(day, entry);
   });
 
@@ -310,7 +307,8 @@ function buildSchedule(
     const day = getDayFromDate(assignment.date);
     if (lockedMap.get(day)?.[assignment.shiftType]) return;
     const entry = schedule.get(day) ?? {};
-    entry[assignment.shiftType] = assignment.workerId ?? null;
+    entry[assignment.shiftType] =
+      assignment.workerId && selectedIds.has(assignment.workerId) ? assignment.workerId : null;
     schedule.set(day, entry);
   });
 
@@ -363,6 +361,7 @@ function buildSchedule(
     if (shift === "day" && !worker.allowDay) return false;
     if (shift === "night" && !worker.allowNight) return false;
     if (busyEntry[shift].has(worker.id)) return false;
+    if (worker.assigned >= worker.hardCap) return false;
     const rest = evaluateRestRule(historyById.get(worker.id), worker.id, day, shift, entry, busyEntry);
     if (!rest.allowed) return false;
     return true;
@@ -389,6 +388,10 @@ function buildSchedule(
       const workerId = entry[shift];
       if (!workerId) return;
       const worker = ensureStateForWorker(workerId);
+      if (worker.assigned >= worker.hardCap) {
+        entry[shift] = null;
+        return;
+      }
       const rest = evaluateRestRule(historyById.get(workerId), workerId, day, shift, entry, busyEntry);
       if (!rest.allowed) {
         entry[shift] = null; // čak i ako je locked, pravilo odmora pobjeđuje
@@ -549,6 +552,13 @@ export async function POST(request: Request) {
     const sanitizedPreferences = sanitizePreferences(workerPreferencesRaw, daysInMonth);
     const monthZeroBased = month - 1;
     const totalSlots = daysInMonth * 2;
+    const availabilityClamped = clampTargetsToAvailability(
+      sanitizedPreferences,
+      busyAssignments,
+      year,
+      monthZeroBased,
+      daysInMonth
+    );
     const lockedMap = new Map<number, Partial<Record<ShiftType, boolean>>>();
     lockedShiftsRaw.forEach((item) => {
       const day = Number(item.date.split("-")[2]);
@@ -638,7 +648,7 @@ Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id
     }
 
     const { assignments: finalAssignments, stateById, normalizedPrefs } = buildSchedule(
-      sanitizedPreferences,
+      availabilityClamped,
       aiAssignments,
       lockedAssignments,
       busyAssignments,

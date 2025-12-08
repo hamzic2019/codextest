@@ -3,15 +3,30 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import { usePathname } from "next/navigation";
-import { CalendarClock, HeartPulse, Settings2, Sparkles, Users2, type LucideIcon } from "lucide-react";
+import {
+  BarChart3,
+  CalendarClock,
+  HeartPulse,
+  Settings2,
+  Sparkles,
+  Users2,
+  type LucideIcon,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useTranslations, type TranslationKey } from "../i18n/language-provider";
 
-export type NavIcon = "sparkles" | "calendarClock" | "heartPulse" | "users2" | "settings2";
+export type NavIcon =
+  | "sparkles"
+  | "calendarClock"
+  | "barChart3"
+  | "heartPulse"
+  | "users2"
+  | "settings2";
 
 const ICON_MAP: Record<NavIcon, LucideIcon> = {
   sparkles: Sparkles,
   calendarClock: CalendarClock,
+  barChart3: BarChart3,
   heartPulse: HeartPulse,
   users2: Users2,
   settings2: Settings2,

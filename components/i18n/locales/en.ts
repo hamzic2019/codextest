@@ -144,7 +144,7 @@ const translations = {
   "planner.worker.priority": "Priority",
   "planner.worker.addPriority": "Mark as priority",
   "planner.worker.shiftFocus": "Shift focus",
-  "planner.worker.planDays": "Plan shifts",
+  "planner.worker.planDays": "Plan up to",
   "planner.worker.balance": "Balance D / N",
   "planner.worker.focusBalanced": "Balanced",
   "planner.worker.focusDay": "Day {percent}%",

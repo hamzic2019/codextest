@@ -4,7 +4,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo } from "react";
-import { CalendarClock, HeartPulse, Settings2, Sparkles, Users2 } from "lucide-react";
+import { BarChart3, CalendarClock, HeartPulse, Settings2, Sparkles, Users2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
 import { LanguageProvider, useTranslations } from "../i18n/language-provider";
@@ -16,6 +16,7 @@ const baseNavItems = [
     href: "/overview",
     icon: CalendarClock,
   },
+  { labelKey: "nav.analytics" as const, href: "/analytics", icon: BarChart3 },
   { labelKey: "nav.patients" as const, href: "/patients", icon: HeartPulse },
   { labelKey: "nav.workers" as const, href: "/workers", icon: Users2 },
   { labelKey: "nav.settings" as const, href: "/settings", icon: Settings2 },
@@ -140,7 +141,7 @@ function AppShellContent({ children }: { children: ReactNode }) {
         <div className="px-4 py-6 md:px-6">
           <div className="mx-auto flex max-w-[1600px] flex-col gap-4 lg:gap-5">
             <div className="grid grid-cols-2 gap-2 rounded-2xl border border-border/70 bg-white p-3 shadow-sm lg:hidden">
-              {navItems.slice(0, 4).map((item) => {
+              {navItems.slice(0, 5).map((item) => {
                 const Icon = item.icon;
                 const active =
                   pathname === item.href || pathname.startsWith(item.href);

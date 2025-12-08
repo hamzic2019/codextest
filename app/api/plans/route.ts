@@ -27,6 +27,70 @@ type PlanRowWithAssignments = PlanRow & {
   plan_assignments?: AssignmentRow[];
 };
 
+type BusyAssignmentRow = {
+  date: string;
+  shift_type: ShiftType;
+  worker_id: string;
+  plans: {
+    patient_id: string;
+    month: number;
+    year: number;
+  };
+};
+
+const UUID_REGEX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function normalizeWorkerId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!UUID_REGEX.test(trimmed)) return null;
+  return trimmed;
+}
+
+function detectRestViolations(assignments: PlanAssignment[]) {
+  const byWorker = new Map<
+    string,
+    Map<string, { day: boolean; night: boolean }>
+  >();
+
+  const add = (workerId: string, date: string, shift: ShiftType) => {
+    if (!byWorker.has(workerId)) {
+      byWorker.set(workerId, new Map());
+    }
+    const entry = byWorker.get(workerId)!.get(date) ?? { day: false, night: false };
+    entry[shift] = true;
+    byWorker.get(workerId)!.set(date, entry);
+  };
+
+  assignments.forEach((assignment) => {
+    if (!assignment.workerId) return;
+    add(assignment.workerId, assignment.date, assignment.shiftType);
+  });
+
+  for (const [workerId, dateMap] of byWorker.entries()) {
+    for (const [date, entry] of dateMap.entries()) {
+      if (entry.day && entry.night) {
+        return { workerId, date, reason: "same-day" } as const;
+      }
+
+      if (entry.night) {
+        const next = new Date(date);
+        next.setDate(next.getDate() + 1);
+        const y = next.getFullYear();
+        const m = String(next.getMonth() + 1).padStart(2, "0");
+        const d = String(next.getDate()).padStart(2, "0");
+        const nextKey = `${y}-${m}-${d}`;
+        const nextEntry = dateMap.get(nextKey);
+        if (nextEntry?.day) {
+          return { workerId, date, nextDate: nextKey, reason: "night-to-day" } as const;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
 function mapPlan(row: PlanRow, assignments: AssignmentRow[]): Plan {
   const mappedAssignments: PlanAssignment[] = assignments.map((assignment) => ({
     date: assignment.date,
@@ -100,16 +164,17 @@ export async function GET(request: Request) {
 
       if (error) throw error;
 
+      const rows = (data ?? []) as BusyAssignmentRow[];
       const filtered =
         excludePatientId && excludePatientId.length > 0
-          ? (data ?? []).filter((row) => (row as any).plans?.patient_id !== excludePatientId)
-          : data ?? [];
+          ? rows.filter((row) => row.plans.patient_id !== excludePatientId)
+          : rows;
 
       const busy = filtered.map((row) => ({
         date: row.date,
         shiftType: row.shift_type as "day" | "night",
         workerId: row.worker_id as string,
-        patientId: (row as any).plans?.patient_id as string | undefined,
+        patientId: row.plans.patient_id,
       }));
 
       return NextResponse.json({ data: busy });
@@ -157,11 +222,15 @@ export async function POST(request: Request) {
     const patientId = String(payload.patientId ?? "").trim();
     const month = Number(payload.month);
     const year = Number(payload.year);
-    const assignments = Array.isArray(payload.assignments)
+    const assignmentsRaw = Array.isArray(payload.assignments)
       ? (payload.assignments as PlanAssignment[])
       : [];
     const prompt = payload.prompt ? String(payload.prompt) : null;
     const summary = payload.summary ? String(payload.summary) : null;
+    const assignments = assignmentsRaw.map((assignment) => ({
+      ...assignment,
+      workerId: normalizeWorkerId(assignment.workerId),
+    }));
 
     if (!patientId || Number.isNaN(month) || Number.isNaN(year)) {
       return NextResponse.json(
@@ -177,38 +246,61 @@ export async function POST(request: Request) {
     );
 
     if (assignmentsToCheck.length > 0) {
-      const workerIds = Array.from(
-        new Set(assignmentsToCheck.map((assignment) => assignment.workerId as string))
-      );
-      const dates = Array.from(new Set(assignmentsToCheck.map((assignment) => assignment.date)));
+      const workerIds = Array.from(new Set(assignmentsToCheck.map((assignment) => assignment.workerId as string)));
 
-      const { data: conflictRows, error: conflictError } = await supabase
+      const { data: busyRows, error: busyError } = await supabase
         .from("plan_assignments")
         .select("date, shift_type, worker_id, plans!inner(patient_id, month, year)")
         .in("worker_id", workerIds)
-        .in("date", dates)
+        .not("worker_id", "is", null)
         .eq("plans.month", month)
-        .eq("plans.year", year);
+        .eq("plans.year", year)
+        .neq("plans.patient_id", patientId);
 
-      if (conflictError) throw conflictError;
+      if (busyError) throw busyError;
 
-      const conflicting = (conflictRows ?? []).filter((row) => {
-        const patient = (row as any).plans?.patient_id as string | undefined;
-        if (!row.worker_id || !row.shift_type) return false;
-        if (patient === patientId) return false;
-        return assignmentsToCheck.some(
+      const busyAssignments: PlanAssignment[] =
+        (busyRows ?? []).map((row) => ({
+          date: row.date,
+          shiftType: row.shift_type as ShiftType,
+          workerId: row.worker_id,
+          note: null,
+        })) ?? [];
+
+      const conflicting = busyAssignments.filter((busy) =>
+        assignmentsToCheck.some(
           (assignment) =>
-            assignment.workerId === row.worker_id &&
-            assignment.date === row.date &&
-            assignment.shiftType === (row.shift_type as ShiftType)
-        );
-      });
+            assignment.workerId === busy.workerId &&
+            assignment.date === busy.date &&
+            assignment.shiftType === busy.shiftType
+        )
+      );
 
       if (conflicting.length > 0) {
         return NextResponse.json(
           { error: "Neki radnici su već zauzeti na drugim planovima za iste datume/smjene." },
           { status: 409 }
         );
+      }
+
+      const restViolation = detectRestViolations([...assignments, ...busyAssignments]);
+      if (restViolation) {
+        const { workerId, date, nextDate, reason } = restViolation;
+        const message =
+          reason === "same-day"
+            ? `Radnik ${workerId} ne može imati dnevnu i noćnu smjenu istog dana (${date}).`
+            : `Radnik ${workerId} ne može raditi noć ${date} i dnevnu ${nextDate ?? "sljedećeg dana"} (12h odmora).`;
+        return NextResponse.json({ error: message }, { status: 400 });
+      }
+    } else {
+      const restViolation = detectRestViolations(assignments);
+      if (restViolation) {
+        const { workerId, date, nextDate, reason } = restViolation;
+        const message =
+          reason === "same-day"
+            ? `Radnik ${workerId} ne može imati dnevnu i noćnu smjenu istog dana (${date}).`
+            : `Radnik ${workerId} ne može raditi noć ${date} i dnevnu ${nextDate ?? "sljedećeg dana"} (12h odmora).`;
+        return NextResponse.json({ error: message }, { status: 400 });
       }
     }
 

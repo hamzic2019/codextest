@@ -144,7 +144,7 @@ const translations = {
   "planner.worker.priority": "Priorität",
   "planner.worker.addPriority": "Als Priorität markieren",
   "planner.worker.shiftFocus": "Schicht-Fokus",
-  "planner.worker.planDays": "Schichten planen",
+  "planner.worker.planDays": "Bis zu Schichten",
   "planner.worker.balance": "Balance T / N",
   "planner.worker.focusBalanced": "Ausgewogen",
   "planner.worker.focusDay": "Tag {percent}%",

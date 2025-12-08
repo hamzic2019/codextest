@@ -428,11 +428,13 @@ const WorkerCard = memo(function WorkerCard({
             </span>
             <input
               type="number"
-              min={1}
+              min={0}
               max={31}
               value={preference.days}
               onChange={(event) =>
-                onUpdate(preference.workerId, { days: Number(event.target.value) || 1 })
+                onUpdate(preference.workerId, {
+                  days: Math.max(0, Number(event.target.value) || 0),
+                })
               }
               className="ml-auto w-16 rounded-lg border border-slate-200 bg-white px-2 py-1 text-right text-sm font-semibold text-slate-900 focus:border-sky-200 focus:outline-none focus:ring-2 focus:ring-sky-100"
             />
@@ -455,7 +457,7 @@ const WorkerCard = memo(function WorkerCard({
           </button>
         </div>
         <p className={`text-[11px] ${textMutedClass}`}>
-          0% = samo noćne, 100% = samo dnevne · Planiraj dane po želji.
+          0% = samo noćne, 100% = samo dnevne · Ovo je maksimalan broj smjena za radnika.
         </p>
       </div>
     </div>
@@ -834,13 +836,6 @@ export function PlannerWizard() {
         if (!selectedPatient && patientsJson.data?.length) {
           setSelectedPatient(patientsJson.data[0].id);
         }
-
-        if (selectedWorkers.length === 0 && workersJson.data?.length) {
-          const defaults = (workersJson.data as Worker[])
-            .slice(0, 3)
-            .map((worker) => preferenceFromWorker(worker));
-          setSelectedWorkers(defaults);
-        }
       } catch (error) {
         console.error(error);
         setErrorMessage(t("planner.loadError"));
@@ -858,13 +853,6 @@ export function PlannerWizard() {
       setSelectedPatient(patients[0].id);
     }
   }, [patients, selectedPatient]);
-
-  useEffect(() => {
-    if (workers.length > 0 && selectedWorkers.length === 0) {
-      const defaults = workers.slice(0, 3).map((worker) => preferenceFromWorker(worker));
-      setSelectedWorkers(defaults);
-    }
-  }, [selectedWorkers.length, workers]);
 
   useEffect(() => {
     if (!selectedPatient) return;
@@ -908,23 +896,6 @@ export function PlannerWizard() {
         setPromptText(plan.prompt ?? "");
         setShiftLocks(defaultLocks);
         setHasUnsavedChanges(false);
-
-        if (planAssignments.length > 0) {
-          setSelectedWorkers((prev) => {
-            const existing = new Set(prev.map((item) => item.workerId));
-            const next = [...prev];
-
-            planAssignments.forEach((assignment) => {
-              if (!assignment.workerId || existing.has(assignment.workerId)) return;
-              const workerMeta = workerById.get(assignment.workerId);
-              if (!workerMeta) return;
-              next.push(preferenceFromWorker(workerMeta));
-              existing.add(assignment.workerId);
-            });
-
-            return next;
-          });
-        }
       } catch (error) {
         if ((error as Error).name === "AbortError") return;
         console.error(error);

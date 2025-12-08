@@ -144,7 +144,7 @@ const translations = {
   "planner.worker.priority": "Prioritet",
   "planner.worker.addPriority": "Dodaj prioritet",
   "planner.worker.shiftFocus": "Fokus smjene",
-  "planner.worker.planDays": "Planiraj smjene",
+  "planner.worker.planDays": "Planiraj smjene do",
   "planner.worker.balance": "Balans D / N",
   "planner.worker.focusBalanced": "Balansirano",
   "planner.worker.focusDay": "Dnevne {percent}%",
