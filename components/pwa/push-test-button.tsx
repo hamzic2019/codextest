@@ -37,7 +37,9 @@ export function PushTestButton() {
       });
 
       if (!res.ok) {
-        throw new Error("Slanje test notifikacije nije uspjelo.");
+        const payload = await res.json().catch(() => null);
+        const reason = payload?.error || payload?.message;
+        throw new Error(reason ?? "Slanje test notifikacije nije uspjelo.");
       }
 
       setStatus("success");

@@ -1,6 +1,8 @@
 /* Browser-only helpers for PWA registration and push notification setup. */
 
-export const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+export const VAPID_PUBLIC_KEY = normalizeVapidKey(
+  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
+);
 
 export function isPwaSupported() {
   return typeof window !== "undefined" && "serviceWorker" in navigator;
@@ -35,7 +37,8 @@ export async function ensurePushSubscription(
   publicKey = VAPID_PUBLIC_KEY
 ) {
   if (typeof window === "undefined") return null;
-  if (!publicKey) {
+  const normalizedKey = normalizeVapidKey(publicKey);
+  if (!normalizedKey) {
     throw new Error("VAPID public key nije postavljen (NEXT_PUBLIC_VAPID_PUBLIC_KEY).");
   }
   if (!("pushManager" in registration)) {
@@ -54,9 +57,18 @@ export async function ensurePushSubscription(
   const existing = await registration.pushManager.getSubscription();
   if (existing) return existing;
 
+  let applicationServerKey: Uint8Array;
+  try {
+    applicationServerKey = urlBase64ToUint8Array(normalizedKey);
+  } catch (error) {
+    throw new Error(
+      "VAPID public key je u pogrešnom formatu. Ukloni navodnike ili razmake i pokušaj ponovo."
+    );
+  }
+
   return registration.pushManager.subscribe({
     userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(publicKey),
+    applicationServerKey,
   });
 }
 
@@ -78,6 +90,11 @@ export async function saveSubscription(
   if (!res.ok) {
     throw new Error("Ne mogu sačuvati push subscription.");
   }
+}
+
+function normalizeVapidKey(raw?: string | null) {
+  if (!raw) return raw ?? undefined;
+  return raw.trim().replace(/^"+|"+$/g, "").replace(/\s+/g, "");
 }
 
 function urlBase64ToUint8Array(base64String: string) {
