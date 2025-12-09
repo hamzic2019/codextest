@@ -1,4 +1,5 @@
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
+import type { Database } from "@/lib/supabase/types";
 import { NextResponse } from "next/server";
 import webpush, { WebPushError } from "web-push";
 
@@ -11,6 +12,8 @@ type Payload = {
   body?: string;
   url?: string;
 };
+
+type PushSubRow = Database["public"]["Tables"]["push_subscriptions"]["Row"];
 
 export async function POST(req: Request) {
   if (!vapidPublicKey || !vapidPrivateKey) {
@@ -29,7 +32,9 @@ export async function POST(req: Request) {
     return NextResponse.json({ error: fetchError.message }, { status: 500 });
   }
 
-  if (!subs?.length) {
+  const subscriptions: Pick<PushSubRow, "id" | "endpoint" | "auth" | "p256dh">[] = subs ?? [];
+
+  if (!subscriptions.length) {
     return NextResponse.json({ ok: true, sent: 0, pruned: 0 });
   }
 
@@ -45,7 +50,7 @@ export async function POST(req: Request) {
   const staleIds: string[] = [];
 
   await Promise.all(
-    subs.map(async (sub) => {
+    subscriptions.map(async (sub) => {
       try {
         await webpush.sendNotification(
           {
