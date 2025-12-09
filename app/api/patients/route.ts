@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/supabase/types";
 import type { Patient } from "@/types";
 
 function mapPatient(row: {
@@ -22,7 +24,7 @@ function mapPatient(row: {
 
 export async function GET() {
   try {
-    const supabase = createServiceSupabaseClient();
+    const supabase = createServiceSupabaseClient() as SupabaseClient<Database>;
     const { data, error } = await supabase
       .from("patients")
       .select("*")
@@ -55,9 +57,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const supabase = createServiceSupabaseClient();
-    const { data, error } = await supabase
-      .from("patients")
+    const supabase = createServiceSupabaseClient() as SupabaseClient<Database>;
+    const { data, error } = await (supabase.from("patients") as any)
       .insert({ name, city, level, notes })
       .select()
       .single();

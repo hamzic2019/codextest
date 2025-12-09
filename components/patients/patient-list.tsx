@@ -12,6 +12,12 @@ const actionButtonStyles =
 export function PatientList({
   patients,
   isLoading,
+  isSearching,
+  isLoadingMore,
+  hasMore,
+  searchValue,
+  onSearchChange,
+  onLoadMore,
   error,
   onView,
   onEdit,
@@ -19,6 +25,12 @@ export function PatientList({
 }: {
   patients: Patient[];
   isLoading?: boolean;
+  isSearching?: boolean;
+  isLoadingMore?: boolean;
+  hasMore?: boolean;
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
+  onLoadMore?: () => void;
   error?: string | null;
   onView: (patient: Patient) => void;
   onEdit: (patient: Patient) => void;
@@ -37,6 +49,20 @@ export function PatientList({
           </p>
           <p className="text-sm text-slate-500">{t("patients.list.subtitle")}</p>
         </div>
+        {onSearchChange ? (
+          <div className="flex items-center gap-3">
+            <input
+              type="search"
+              value={searchValue ?? ""}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Pretraga pacijenata"
+              className="w-48 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm outline-none transition focus:border-sky-400 focus:ring-2 focus:ring-sky-100"
+            />
+            {isSearching ? (
+              <span className="text-xs font-medium text-slate-500">Tražim…</span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div className="divide-y divide-border/60">
@@ -118,6 +144,18 @@ export function PatientList({
           ))}
         </div>
       </div>
+      {onLoadMore ? (
+        <div className="border-t border-border/60 px-5 py-4">
+          <button
+            type="button"
+            onClick={onLoadMore}
+            disabled={isLoadingMore || !hasMore}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:border-slate-100 disabled:text-slate-400"
+          >
+            {isLoadingMore ? "Učitavanje..." : hasMore ? "Učitaj još" : "Nema više rezultata"}
+          </button>
+        </div>
+      ) : null}
     </Card>
   );
 }

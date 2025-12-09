@@ -1,11 +1,18 @@
 import { notFound } from "next/navigation";
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
+import type { Database } from "@/lib/supabase/types";
 import { PatientDetailView } from "@/components/patients/patient-detail-view";
 import type { Patient } from "@/types";
 
+type PatientRow = Database["public"]["Tables"]["patients"]["Row"];
+
 async function fetchPatient(id: string): Promise<Patient | null> {
   const supabase = createServiceSupabaseClient();
-  const { data, error } = await supabase.from("patients").select("*").eq("id", id).maybeSingle();
+  const { data, error } = await supabase
+    .from("patients")
+    .select("id, name, city, level, notes, created_at")
+    .eq("id", id)
+    .maybeSingle<PatientRow>();
   if (error) {
     console.error("Error loading patient", error);
     return null;

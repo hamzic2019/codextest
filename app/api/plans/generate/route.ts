@@ -8,6 +8,8 @@ type SanitizedPreference = WorkerPreference & {
   priority: boolean;
 };
 
+type BusyAssignment = PlanAssignment & { patientId?: string | null };
+
 type NormalizedPreference = SanitizedPreference & {
   targetDay: number;
   targetNight: number;
@@ -67,7 +69,7 @@ function getDayFromDate(date: string) {
 
 function clampTargetsToAvailability(
   preferences: SanitizedPreference[],
-  busyAssignments: PlanAssignment[],
+  busyAssignments: BusyAssignment[],
   year: number,
   monthZeroBased: number,
   daysInMonth: number
@@ -244,11 +246,98 @@ function buildEmptySchedule(daysInMonth: number) {
   return schedule;
 }
 
+function detectRestViolationsLocal(assignments: PlanAssignment[]) {
+  const byWorker = new Map<string, Map<string, { day: boolean; night: boolean }>>();
+
+  const add = (workerId: string, date: string, shift: ShiftType) => {
+    if (!byWorker.has(workerId)) {
+      byWorker.set(workerId, new Map());
+    }
+    const entry = byWorker.get(workerId)!.get(date) ?? { day: false, night: false };
+    entry[shift] = true;
+    byWorker.get(workerId)!.set(date, entry);
+  };
+
+  assignments.forEach((assignment) => {
+    if (!assignment.workerId) return;
+    add(assignment.workerId, assignment.date, assignment.shiftType);
+  });
+
+  for (const [workerId, dateMap] of byWorker.entries()) {
+    for (const [date, entry] of dateMap.entries()) {
+      if (entry.day && entry.night) {
+        return { workerId, date, reason: "same-day" } as const;
+      }
+
+      if (entry.night) {
+        const next = new Date(date);
+        next.setDate(next.getDate() + 1);
+        const y = next.getFullYear();
+        const m = String(next.getMonth() + 1).padStart(2, "0");
+        const d = String(next.getDate()).padStart(2, "0");
+        const nextKey = `${y}-${m}-${d}`;
+        const nextEntry = dateMap.get(nextKey);
+        if (nextEntry?.day) {
+          return { workerId, date, nextDate: nextKey, reason: "night-to-day" } as const;
+        }
+      }
+    }
+  }
+
+  return null;
+}
+
+function validateGeneratedAssignments(assignments: PlanAssignment[], busyAssignments: BusyAssignment[]) {
+  const busyMap = new Map<string, { day: Set<string>; night: Set<string> }>();
+  busyAssignments.forEach((assignment) => {
+    if (!assignment.workerId) return;
+    const current = busyMap.get(assignment.date) ?? { day: new Set<string>(), night: new Set<string>() };
+    current[assignment.shiftType].add(assignment.workerId);
+    busyMap.set(assignment.date, current);
+  });
+
+  for (const assignment of assignments) {
+    if (!assignment.workerId) continue;
+    const busy = busyMap.get(assignment.date);
+    if (busy?.[assignment.shiftType]?.has(assignment.workerId)) {
+      return `Radnik ${assignment.workerId} je zauzet kod drugog pacijenta ${assignment.date} (${assignment.shiftType}).`;
+    }
+    if (assignment.shiftType === "day") {
+      const prevDate = new Date(assignment.date);
+      prevDate.setDate(prevDate.getDate() - 1);
+      const prevKey = `${prevDate.getFullYear()}-${String(prevDate.getMonth() + 1).padStart(2, "0")}-${String(prevDate.getDate()).padStart(2, "0")}`;
+      const prevBusy = busyMap.get(prevKey);
+      if (prevBusy?.night.has(assignment.workerId)) {
+        return `Radnik ${assignment.workerId} radio je noć ${prevKey} kod drugog pacijenta pa ne može dnevnu ${assignment.date}.`;
+      }
+    }
+    if (assignment.shiftType === "night") {
+      const nextDate = new Date(assignment.date);
+      nextDate.setDate(nextDate.getDate() + 1);
+      const nextKey = `${nextDate.getFullYear()}-${String(nextDate.getMonth() + 1).padStart(2, "0")}-${String(nextDate.getDate()).padStart(2, "0")}`;
+      const nextBusy = busyMap.get(nextKey);
+      if (nextBusy?.day.has(assignment.workerId)) {
+        return `Radnik ${assignment.workerId} ima dnevnu ${nextKey} kod drugog pacijenta pa ne može noćnu ${assignment.date}.`;
+      }
+    }
+  }
+
+  const restViolation = detectRestViolationsLocal([...assignments, ...busyAssignments]);
+  if (restViolation) {
+    const { workerId, date, nextDate, reason } = restViolation;
+    return reason === "same-day"
+      ? `Radnik ${workerId} ne može imati dnevnu i noćnu smjenu istog dana (${date}).`
+      : `Radnik ${workerId} ne može raditi noć ${date} i dnevnu ${nextDate ?? "sljedećeg dana"} (12h odmora).`;
+  }
+
+  return null;
+}
+
 function buildSchedule(
   preferences: SanitizedPreference[],
   aiAssignments: PlanAssignment[],
   lockedAssignments: PlanAssignment[],
-  busyAssignments: PlanAssignment[],
+  busyAssignments: BusyAssignment[],
   lockedMap: Map<number, Partial<Record<ShiftType, boolean>>>,
   year: number,
   monthZeroBased: number,
@@ -361,6 +450,10 @@ function buildSchedule(
     if (shift === "day" && !worker.allowDay) return false;
     if (shift === "night" && !worker.allowNight) return false;
     if (busyEntry[shift].has(worker.id)) return false;
+    if (shift === "night") {
+      const busyNext = busyByDay.get(day + 1);
+      if (busyNext?.day.has(worker.id)) return false;
+    }
     if (worker.assigned >= worker.hardCap) return false;
     const rest = evaluateRestRule(historyById.get(worker.id), worker.id, day, shift, entry, busyEntry);
     if (!rest.allowed) return false;
@@ -497,7 +590,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "patientId, month i year su obavezni." }, { status: 400 });
     }
 
-    const supabase = createServiceSupabaseClient();
+    const supabase = createServiceSupabaseClient() as any;
     const { data: patient, error: patientError } = await supabase
       .from("patients")
       .select("*")
@@ -523,27 +616,39 @@ export async function POST(request: Request) {
 
     const { data: otherPlans } = await supabase
       .from("plans")
-      .select("id")
+      .select("id, patient_id")
       .eq("month", month)
       .eq("year", year)
       .neq("patient_id", patientId);
 
-    const otherPlanIds = (otherPlans ?? []).map((plan) => plan.id).filter(Boolean);
+    const otherPlanRows = (otherPlans ?? []) as { id: string; patient_id: string | null }[];
+    const otherPlanIds = otherPlanRows.map((plan) => plan.id).filter(Boolean);
+    const planPatientMap = new Map<string, string>();
+    otherPlanRows.forEach((plan) => {
+      if (plan?.id && plan?.patient_id) planPatientMap.set(plan.id, plan.patient_id);
+    });
 
-    const busyAssignments: PlanAssignment[] = [];
+    const busyAssignments: BusyAssignment[] = [];
     if (otherPlanIds.length > 0) {
       const { data: busyRows, error: busyError } = await supabase
         .from("plan_assignments")
-        .select("date, shift_type, worker_id")
+        .select("date, shift_type, worker_id, plan_id")
         .in("plan_id", otherPlanIds);
 
       if (busyError) throw busyError;
-      busyRows?.forEach((row) => {
+      const busyRowsTyped = (busyRows ?? []) as {
+        date: string;
+        shift_type: ShiftType;
+        worker_id: string | null;
+        plan_id: string | null;
+      }[];
+      busyRowsTyped.forEach((row) => {
         busyAssignments.push({
           date: row.date,
           shiftType: row.shift_type,
           workerId: row.worker_id,
           note: null,
+          patientId: planPatientMap.get(row.plan_id ?? "") ?? undefined,
         });
       });
     }
@@ -573,7 +678,7 @@ export async function POST(request: Request) {
     });
 
     const openai = getOpenAIClient();
-    const systemPrompt = `
+const systemPrompt = `
 Ti si planer smjena za njegu. Prvo ispoštuj prioritetne radnike (priority=true): oni moraju dobiti traženi broj smjena i preferirani omjer (npr. 17 dana sa 100% noćne) koliko god je realno moguće, uz poštovanje pravila odmora; ostale radnike prilagodi oko njih.
 Istovremeno svaki odabrani radnik treba dobiti barem nekoliko smjena; preostale smjene ravnopravno podijeli tako da niko ne ostane na 0 i da raspored izgleda fer.
 Moraš poštovati:
@@ -583,6 +688,7 @@ Moraš poštovati:
 - Poštuj preferencije (day/night) i ratio; prioritetni radnici imaju prednost kod popune.
 - Ne planiraj "u cugu": izbjegavaj serije duže od 4-5 dana istog radnika; miješaj radnike kroz mjesec, uključujući vikende.
 - Koristi samo workerId iz liste. Ako baš nema radnika, ostavi null, ali pokušaj popuniti sve smjene.
+- Dobijaš listu busyShifts (drugi pacijenti u istom mjesecu). Nikad ne dodjeljuj radnika na isti datum/smjenu ako je tamo već busy, niti na noć ako ima dnevnu naredni dan kod drugog pacijenta.
 Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id|null>", "nightWorkerId": "<id|null>", "note": "..." }].
 `;
 
@@ -598,7 +704,7 @@ Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id
         notes: patient.notes,
       },
       prompt,
-      workers: workerRows.map((worker) => ({
+      workers: workerRows.map((worker: any) => ({
         id: worker.id,
         name: worker.name,
         role: worker.role ?? "",
@@ -612,6 +718,12 @@ Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id
         hoursCompleted: worker.hours_completed ?? 0,
       })),
       preferences: sanitizedPreferences,
+      busyShifts: busyAssignments.map((item) => ({
+        date: item.date,
+        shiftType: item.shiftType,
+        workerId: item.workerId,
+        patientId: (item as { patientId?: string }).patientId ?? null,
+      })),
     };
 
     let aiAssignments: PlanAssignment[] = [];
@@ -657,6 +769,11 @@ Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id
       monthZeroBased,
       daysInMonth
     );
+
+    const conflictMessage = validateGeneratedAssignments(finalAssignments, busyAssignments);
+    if (conflictMessage) {
+      return NextResponse.json({ error: conflictMessage }, { status: 409 });
+    }
 
     const summary = formatMeta(normalizedPrefs, stateById, daysInMonth, notes);
 

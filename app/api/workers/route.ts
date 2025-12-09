@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
+import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Database } from "@/lib/supabase/types";
 import type { Worker } from "@/types";
 import type { ShiftType, WorkerStatus } from "@/types";
 
@@ -29,7 +31,7 @@ function mapWorker(row: {
 
 export async function GET() {
   try {
-    const supabase = createServiceSupabaseClient();
+    const supabase = createServiceSupabaseClient() as SupabaseClient<Database>;
     const { data, error } = await supabase
       .from("workers")
       .select("*")
@@ -76,9 +78,8 @@ export async function POST(request: Request) {
       );
     }
 
-    const supabase = createServiceSupabaseClient();
-    const { data, error } = await supabase
-      .from("workers")
+    const supabase = createServiceSupabaseClient() as SupabaseClient<Database>;
+    const { data, error } = await (supabase.from("workers") as any)
       .insert({
         name,
         role,
@@ -119,15 +120,13 @@ export async function DELETE(request: Request) {
     const supabase = createServiceSupabaseClient();
 
     // Odveži radnika iz planova prije brisanja da izbjegnemo FK probleme.
-    const { error: unassignError } = await supabase
-      .from("plan_assignments")
+    const { error: unassignError } = await (supabase.from("plan_assignments") as any)
       .update({ worker_id: null })
       .eq("worker_id", workerId);
 
     if (unassignError) throw unassignError;
 
-    const { error: deleteError } = await supabase
-      .from("workers")
+    const { error: deleteError } = await (supabase.from("workers") as any)
       .delete()
       .eq("id", workerId);
 

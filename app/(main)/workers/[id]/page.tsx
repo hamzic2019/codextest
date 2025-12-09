@@ -1,11 +1,18 @@
 import { notFound } from "next/navigation";
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
+import type { Database } from "@/lib/supabase/types";
 import { WorkerDetailView } from "@/components/workers/worker-detail-view";
 import type { Worker } from "@/types";
 
+type WorkerRow = Database["public"]["Tables"]["workers"]["Row"];
+
 async function fetchWorker(id: string): Promise<Worker | null> {
   const supabase = createServiceSupabaseClient();
-  const { data, error } = await supabase.from("workers").select("*").eq("id", id).maybeSingle();
+  const { data, error } = await supabase
+    .from("workers")
+    .select("id, name, role, city, status, preferred_shifts, hours_planned, hours_completed, created_at")
+    .eq("id", id)
+    .maybeSingle<WorkerRow>();
   if (error) {
     console.error("Error loading worker", error);
     return null;

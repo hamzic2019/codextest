@@ -1,7 +1,7 @@
 "use client";
 
 import { Clock3, Eye, MapPin, Pencil, ShieldHalf, Trash2 } from "lucide-react";
-import type { Worker } from "@/types";
+import type { Worker, WorkerStatus } from "@/types";
 import { Card } from "../ui/card";
 import { Badge } from "../ui/badge";
 import { useTranslations } from "../i18n/language-provider";
@@ -12,6 +12,13 @@ const actionButtonStyles =
 export function WorkerList({
   workers,
   isLoading,
+  isSearching,
+  isLoadingMore,
+  hasMore,
+  searchValue,
+  onSearchChange,
+  onLoadMore,
+  statusLabels,
   error,
   onView,
   onEdit,
@@ -19,6 +26,13 @@ export function WorkerList({
 }: {
   workers: Worker[];
   isLoading?: boolean;
+  isSearching?: boolean;
+  isLoadingMore?: boolean;
+  hasMore?: boolean;
+  searchValue?: string;
+  onSearchChange?: (value: string) => void;
+  onLoadMore?: () => void;
+  statusLabels?: Record<WorkerStatus, string>;
   error?: string | null;
   onView: (worker: Worker) => void;
   onEdit: (worker: Worker) => void;
@@ -27,7 +41,7 @@ export function WorkerList({
   const { t } = useTranslations();
 
   const isEmpty = !isLoading && !error && workers.length === 0;
-  const statusLabels = {
+  const statusLabelMap = statusLabels ?? {
     radnik: t("planner.worker.status.radnik"),
     anarbeitung: t("planner.worker.status.anarbeitung"),
     student: t("planner.worker.status.student"),
@@ -45,6 +59,20 @@ export function WorkerList({
           </p>
           <p className="text-sm text-slate-500">{t("workers.list.subtitle")}</p>
         </div>
+        {onSearchChange ? (
+          <div className="flex items-center gap-3">
+            <input
+              type="search"
+              value={searchValue ?? ""}
+              onChange={(e) => onSearchChange(e.target.value)}
+              placeholder="Pretraga radnika"
+              className="w-48 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-800 shadow-sm outline-none transition focus:border-emerald-400 focus:ring-2 focus:ring-emerald-100"
+            />
+            {isSearching ? (
+              <span className="text-xs font-medium text-slate-500">Tražim…</span>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <div className="divide-y divide-border/60">
@@ -72,12 +100,12 @@ export function WorkerList({
                 <div className="flex-1 space-y-2">
                   <div className="flex flex-wrap items-center gap-2">
                     <p className="text-base font-semibold text-slate-900">
-                      {worker.name}
-                    </p>
-                    <Badge variant="emerald" className="inline-flex items-center gap-1">
-                      <ShieldHalf className="h-3.5 w-3.5" />
-                      {statusLabels[worker.status] ?? worker.status}
-                    </Badge>
+                    {worker.name}
+                  </p>
+                  <Badge variant="emerald" className="inline-flex items-center gap-1">
+                    <ShieldHalf className="h-3.5 w-3.5" />
+                    {statusLabelMap[worker.status] ?? worker.status}
+                  </Badge>
                     <Badge variant="sky" className="inline-flex items-center gap-1">
                       <MapPin className="h-3.5 w-3.5" />
                       {worker.city}
@@ -122,6 +150,18 @@ export function WorkerList({
           ))}
         </div>
       </div>
+      {onLoadMore ? (
+        <div className="border-t border-border/60 px-5 py-4">
+          <button
+            type="button"
+            onClick={onLoadMore}
+            disabled={isLoadingMore || !hasMore}
+            className="inline-flex items-center gap-2 rounded-xl border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 disabled:cursor-not-allowed disabled:border-slate-100 disabled:text-slate-400"
+          >
+            {isLoadingMore ? "Učitavanje..." : hasMore ? "Učitaj još" : "Nema više rezultata"}
+          </button>
+        </div>
+      ) : null}
     </Card>
   );
 }

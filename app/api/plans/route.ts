@@ -91,6 +91,72 @@ function detectRestViolations(assignments: PlanAssignment[]) {
   return null;
 }
 
+function toBusyMap(assignments: PlanAssignment[]): Map<string, { day: Set<string>; night: Set<string> }> {
+  const map = new Map<string, { day: Set<string>; night: Set<string> }>();
+  assignments.forEach((assignment) => {
+    if (!assignment.workerId) return;
+    const current = map.get(assignment.date) ?? { day: new Set<string>(), night: new Set<string>() };
+    current[assignment.shiftType].add(assignment.workerId);
+    map.set(assignment.date, current);
+  });
+  return map;
+}
+
+function diffInDays(from: string, to: string) {
+  const parse = (value: string) => {
+    const [y, m, d] = value.split("-").map(Number);
+    return Date.UTC(y, m - 1, d);
+  };
+  return Math.round((parse(to) - parse(from)) / (1000 * 60 * 60 * 24));
+}
+
+function addDays(date: string, delta: number) {
+  const [y, m, d] = date.split("-").map(Number);
+  const value = new Date(Date.UTC(y, m - 1, d));
+  value.setUTCDate(value.getUTCDate() + delta);
+  const nextY = value.getUTCFullYear();
+  const nextM = String(value.getUTCMonth() + 1).padStart(2, "0");
+  const nextD = String(value.getUTCDate()).padStart(2, "0");
+  return `${nextY}-${nextM}-${nextD}`;
+}
+
+function validateAssignments(assignments: PlanAssignment[], busyAssignments: PlanAssignment[]) {
+  const busyMap = toBusyMap(busyAssignments);
+  const combinedForRest = [...assignments, ...busyAssignments];
+
+  for (const assignment of assignments) {
+    if (!assignment.workerId) continue;
+    const busy = busyMap.get(assignment.date);
+    if (busy?.[assignment.shiftType]?.has(assignment.workerId)) {
+      return `Radnik ${assignment.workerId} je zauzet kod drugog pacijenta ${assignment.date} (${assignment.shiftType}).`;
+    }
+    if (assignment.shiftType === "day") {
+      const prevDay = addDays(assignment.date, -1);
+      const busyPrev = busyMap.get(prevDay);
+      if (busyPrev?.night.has(assignment.workerId)) {
+        return `Radnik ${assignment.workerId} radio je noć ${prevDay} kod drugog pacijenta pa ne može dnevnu ${assignment.date}.`;
+      }
+    }
+    if (assignment.shiftType === "night") {
+      const nextDay = addDays(assignment.date, 1);
+      const busyNext = busyMap.get(nextDay);
+      if (busyNext?.day.has(assignment.workerId)) {
+        return `Radnik ${assignment.workerId} ima dnevnu ${nextDay} kod drugog pacijenta pa ne može noćnu ${assignment.date}.`;
+      }
+    }
+  }
+
+  const restViolation = detectRestViolations(combinedForRest);
+  if (restViolation) {
+    const { workerId, date, nextDate, reason } = restViolation;
+    return reason === "same-day"
+      ? `Radnik ${workerId} ne može imati dnevnu i noćnu smjenu istog dana (${date}).`
+      : `Radnik ${workerId} ne može raditi noć ${date} i dnevnu ${nextDate ?? "sljedećeg dana"} (12h odmora).`;
+  }
+
+  return null;
+}
+
 function mapPlan(row: PlanRow, assignments: AssignmentRow[]): Plan {
   const mappedAssignments: PlanAssignment[] = assignments.map((assignment) => ({
     date: assignment.date,
@@ -121,7 +187,7 @@ export async function GET(request: Request) {
     const yearParam = url.searchParams.get("year");
     const excludePatientId = url.searchParams.get("excludePatientId");
 
-    const supabase = createServiceSupabaseClient();
+    const supabase = createServiceSupabaseClient() as any;
 
     if (mode === "available" && patientId) {
       const { data, error } = await supabase
@@ -133,13 +199,13 @@ export async function GET(request: Request) {
 
       if (error) throw error;
 
+      const availablePlans = (data ?? []) as { patient_id: string; month: number; year: number }[];
       return NextResponse.json({
-        data:
-          data?.map((item) => ({
-            patientId: item.patient_id,
-            month: item.month,
-            year: item.year,
-          })) ?? [],
+        data: availablePlans.map((item) => ({
+          patientId: item.patient_id,
+          month: item.month,
+          year: item.year,
+        })),
       });
     }
 
@@ -239,11 +305,13 @@ export async function POST(request: Request) {
       );
     }
 
-    const supabase = createServiceSupabaseClient();
+      const supabase = createServiceSupabaseClient() as any;
 
     const assignmentsToCheck = assignments.filter(
       (assignment) => assignment.workerId !== null && assignment.workerId !== undefined
     );
+
+    let busyAssignments: PlanAssignment[] = [];
 
     if (assignmentsToCheck.length > 0) {
       const workerIds = Array.from(new Set(assignmentsToCheck.map((assignment) => assignment.workerId as string)));
@@ -259,49 +327,18 @@ export async function POST(request: Request) {
 
       if (busyError) throw busyError;
 
-      const busyAssignments: PlanAssignment[] =
-        (busyRows ?? []).map((row) => ({
+      busyAssignments =
+        ((busyRows ?? []) as { date: string; shift_type: ShiftType; worker_id: string | null }[]).map((row) => ({
           date: row.date,
           shiftType: row.shift_type as ShiftType,
           workerId: row.worker_id,
           note: null,
         })) ?? [];
+    }
 
-      const conflicting = busyAssignments.filter((busy) =>
-        assignmentsToCheck.some(
-          (assignment) =>
-            assignment.workerId === busy.workerId &&
-            assignment.date === busy.date &&
-            assignment.shiftType === busy.shiftType
-        )
-      );
-
-      if (conflicting.length > 0) {
-        return NextResponse.json(
-          { error: "Neki radnici su već zauzeti na drugim planovima za iste datume/smjene." },
-          { status: 409 }
-        );
-      }
-
-      const restViolation = detectRestViolations([...assignments, ...busyAssignments]);
-      if (restViolation) {
-        const { workerId, date, nextDate, reason } = restViolation;
-        const message =
-          reason === "same-day"
-            ? `Radnik ${workerId} ne može imati dnevnu i noćnu smjenu istog dana (${date}).`
-            : `Radnik ${workerId} ne može raditi noć ${date} i dnevnu ${nextDate ?? "sljedećeg dana"} (12h odmora).`;
-        return NextResponse.json({ error: message }, { status: 400 });
-      }
-    } else {
-      const restViolation = detectRestViolations(assignments);
-      if (restViolation) {
-        const { workerId, date, nextDate, reason } = restViolation;
-        const message =
-          reason === "same-day"
-            ? `Radnik ${workerId} ne može imati dnevnu i noćnu smjenu istog dana (${date}).`
-            : `Radnik ${workerId} ne može raditi noć ${date} i dnevnu ${nextDate ?? "sljedećeg dana"} (12h odmora).`;
-        return NextResponse.json({ error: message }, { status: 400 });
-      }
+    const conflictMessage = validateAssignments(assignments, busyAssignments);
+    if (conflictMessage) {
+      return NextResponse.json({ error: conflictMessage }, { status: 409 });
     }
 
     const { data: existing } = await supabase
@@ -388,7 +425,7 @@ export async function DELETE(request: Request) {
       );
     }
 
-    const supabase = createServiceSupabaseClient();
+    const supabase = createServiceSupabaseClient() as any;
 
     const { data: existing, error: fetchError } = await supabase
       .from("plans")

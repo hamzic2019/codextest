@@ -606,6 +606,20 @@ function preferenceFromWorker(worker: Worker, priority = false): WorkerPreferenc
   };
 }
 
+function autoPickLeastBusyWorkers(workers: Worker[], limit = 5): WorkerPreference[] {
+  const sorted = [...workers].sort((a, b) => {
+    const aCompleted = a.hoursCompleted ?? 0;
+    const bCompleted = b.hoursCompleted ?? 0;
+    if (aCompleted !== bCompleted) return aCompleted - bCompleted;
+    const aPlanned = a.hoursPlanned ?? 0;
+    const bPlanned = b.hoursPlanned ?? 0;
+    if (aPlanned !== bPlanned) return aPlanned - bPlanned;
+    return a.name.localeCompare(b.name);
+  });
+
+  return sorted.slice(0, limit).map((worker) => preferenceFromWorker(worker));
+}
+
 function toDateKey(year: number, monthZeroBased: number, day: number) {
   return `${year}-${String(monthZeroBased + 1).padStart(2, "0")}-${String(day).padStart(
     2,
@@ -682,11 +696,25 @@ function localEvaluateRestRule(
     }
   }
 
+  if (shift === "night") {
+    const nextDate = new Date(dateValue);
+    nextDate.setDate(nextDate.getDate() + 1);
+    const nextDateKey = toDateKey(
+      nextDate.getFullYear(),
+      nextDate.getMonth(),
+      nextDate.getDate()
+    );
+    const nextBusy = busyShifts[nextDateKey] ?? { day: [], night: [] };
+    if ((nextBusy.day ?? []).includes(workerId)) {
+      return { allowed: false, reason: "night-to-day" };
+    }
+  }
+
   return { allowed: true };
 }
 
 function clampRequestedDays(days: number, daysInMonth: number) {
-  if (Number.isNaN(days) || days < 1) return 1;
+  if (Number.isNaN(days) || days < 0) return 0;
   // Max 2 shifts per day; keep cap to daysInMonth to avoid silly values.
   return Math.min(days, daysInMonth);
 }
@@ -1109,9 +1137,22 @@ export function PlannerWizard() {
   };
 
   const handleGenerate = async () => {
-    if (!selectedPatient || selectedWorkers.length === 0) {
+    if (!selectedPatient) {
       setErrorMessage(t("planner.generateMissing"));
       return;
+    }
+
+    let workersToUse = selectedWorkers;
+
+    if (workersToUse.length === 0) {
+      const autoSelected = autoPickLeastBusyWorkers(workers);
+      if (autoSelected.length === 0) {
+        setErrorMessage(t("planner.generateMissing"));
+        return;
+      }
+      workersToUse = autoSelected;
+      setSelectedWorkers(autoSelected);
+      setStatusMessage("Automatski odabrani radnici sa najmanje sati.");
     }
 
     setIsGenerating(true);
@@ -1120,11 +1161,11 @@ export function PlannerWizard() {
     setSanitizationNotice(null);
 
     try {
-      const clampedWorkers = selectedWorkers.map((worker) => ({
+      const clampedWorkers = workersToUse.map((worker) => ({
         ...worker,
         days: clampRequestedDays(worker.days, daysInMonth),
       }));
-      const wasClamped = selectedWorkers.some(
+      const wasClamped = workersToUse.some(
         (worker) => worker.days !== clampRequestedDays(worker.days, daysInMonth)
       );
       const notices: string[] = [];
@@ -1139,11 +1180,39 @@ export function PlannerWizard() {
         0
       );
       const requestedNight = requested - requestedDay;
-      notices.push(
-        `Traženo ${requested} smjena (dnevne ≈ ${Math.round(requestedDay)}, noćne ≈ ${Math.round(
-          requestedNight
-        )}); dostupno ${totalSlots} slotova (${daysInMonth} dnevnih / ${daysInMonth} noćnih).`
-      );
+
+      let scaledWorkers = clampedWorkers;
+      if (requested > totalSlots) {
+        const factor = totalSlots / Math.max(requested, 1);
+        const meta = clampedWorkers.map((worker) => ({
+          pref: worker,
+          scaled: Math.max(0, Math.floor(worker.days * factor)),
+        }));
+        let scaledTotal = meta.reduce((sum, item) => sum + item.scaled, 0);
+        let remaining = totalSlots - scaledTotal;
+        const byNeed = [...meta].sort(
+          (a, b) => b.pref.days - a.pref.days || a.pref.workerId.localeCompare(b.pref.workerId)
+        );
+        let idx = 0;
+        while (remaining > 0 && byNeed.length > 0) {
+          byNeed[idx % byNeed.length].scaled += 1;
+          remaining -= 1;
+          idx += 1;
+        }
+        scaledWorkers = meta.map((item) => ({ ...item.pref, days: item.scaled }));
+        const effectiveRequested = scaledWorkers.reduce((sum, worker) => sum + worker.days, 0);
+        notices.push(
+          `Traženo ${requested} smjena (dnevne ≈ ${Math.round(requestedDay)}, noćne ≈ ${Math.round(
+            requestedNight
+          )}); automatski podešeno na ${effectiveRequested} zbog ograničenja ${totalSlots} slotova (${daysInMonth} dnevnih / ${daysInMonth} noćnih).`
+        );
+      } else {
+        notices.push(
+          `Traženo ${requested} smjena (dnevne ≈ ${Math.round(requestedDay)}, noćne ≈ ${Math.round(
+            requestedNight
+          )}); dostupno ${totalSlots} slotova (${daysInMonth} dnevnih / ${daysInMonth} noćnih).`
+        );
+      }
       setSanitizationNotice(notices.join(" · "));
 
       const response = await fetch("/api/plans/generate", {
@@ -1151,7 +1220,7 @@ export function PlannerWizard() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           patientId: selectedPatient,
-          workerPreferences: clampedWorkers,
+          workerPreferences: scaledWorkers,
           month: planMonth + 1,
           year: planYear,
           prompt: promptText,
@@ -1236,11 +1305,25 @@ export function PlannerWizard() {
         throw new Error(json.error || "Failed to save plan");
       }
 
+      const savedPlan = (json.data ?? null) as Plan | null;
+      if (savedPlan?.assignments) {
+        setAssignments(assignmentsListToMap(savedPlan.assignments));
+      }
+      if (savedPlan?.summary) {
+        setGeneratedSummary(savedPlan.summary);
+      }
+      const warningText = json.warnings
+        ? Array.isArray(json.warnings)
+          ? json.warnings.join(" · ")
+          : String(json.warnings)
+        : null;
+      setSanitizationNotice(warningText ?? null);
+
       setStatusMessage(t("planner.saveSuccess"));
       setHasUnsavedChanges(false);
     } catch (error) {
       console.error(error);
-      setErrorMessage(t("planner.saveError"));
+      setErrorMessage((error as Error).message || t("planner.saveError"));
     } finally {
       setIsSaving(false);
     }
@@ -1282,7 +1365,7 @@ export function PlannerWizard() {
     isLoadingData ||
     isLoadingPlan ||
     !selectedPatient ||
-    selectedWorkers.length === 0;
+    workers.length === 0;
   const disableSave =
     isSaving || isGenerating || isLoadingPlan || !selectedPatient || !hasAnyAssignment;
   const todayRow = previewRows.find((row) => row.isToday);

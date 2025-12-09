@@ -13,7 +13,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { useTranslations, type TranslationKey } from "../i18n/language-provider";
+import { useTranslations } from "../i18n/language-provider";
 
 export type NavIcon =
   | "sparkles"
@@ -34,7 +34,7 @@ const ICON_MAP: Record<NavIcon, LucideIcon> = {
 
 export type ShellNavItem = {
   href: string;
-  labelKey: TranslationKey;
+  labelKey: string;
   icon: NavIcon;
 };
 
@@ -45,7 +45,7 @@ export function SidebarNav({ items }: { items: ShellNavItem[] }) {
     () =>
       items.map((item) => ({
         ...item,
-        label: t(item.labelKey),
+        label: t(item.labelKey as any),
       })),
     [items, t]
   );
@@ -136,7 +136,7 @@ export function MobileNav({ items }: { items: ShellNavItem[] }) {
     () =>
       items.map((item) => ({
         ...item,
-        label: t(item.labelKey),
+        label: t(item.labelKey as any),
       })),
     [items, t]
   );

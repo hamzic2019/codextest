@@ -1,15 +1,12 @@
 import { NextResponse } from "next/server";
 import { createServiceSupabaseClient } from "@/lib/supabase/server";
+import type { Database } from "@/lib/supabase/types";
 import type { Patient } from "@/types";
 
-function mapPatient(row: {
-  id: string;
-  name: string;
-  city: string;
-  level: string;
-  notes: string | null;
-  created_at: string;
-}): Patient {
+type PatientRow = Database["public"]["Tables"]["patients"]["Row"];
+type PatientUpdate = Database["public"]["Tables"]["patients"]["Update"];
+
+function mapPatient(row: PatientRow): Patient {
   return {
     id: row.id,
     name: row.name,
@@ -23,12 +20,11 @@ function mapPatient(row: {
 type RouteContext = { params: Promise<{ id: string }> };
 
 export async function GET(_request: Request, context: RouteContext) {
+  const { id } = await context.params;
   try {
-    const { id } = await context.params;
     const supabase = createServiceSupabaseClient();
-    const { data, error } = await supabase
-      .from("patients")
-      .select("*")
+    const { data, error } = await (supabase.from("patients") as any)
+      .select("id, name, city, level, notes, created_at")
       .eq("id", id)
       .maybeSingle();
 
@@ -39,7 +35,7 @@ export async function GET(_request: Request, context: RouteContext) {
 
     return NextResponse.json({ data: mapPatient(data) });
   } catch (error) {
-    console.error(`GET /api/patients/${params.id} error`, error);
+    console.error(`GET /api/patients/${id} error`, error);
     return NextResponse.json(
       { error: "Greška pri čitanju pacijenta." },
       { status: 500 }
@@ -48,8 +44,8 @@ export async function GET(_request: Request, context: RouteContext) {
 }
 
 export async function PUT(request: Request, context: RouteContext) {
+  const { id } = await context.params;
   try {
-    const { id } = await context.params;
     const payload = await request.json();
     const name = String(payload.name ?? "").trim();
     const city = String(payload.city ?? "").trim();
@@ -64,9 +60,9 @@ export async function PUT(request: Request, context: RouteContext) {
     }
 
     const supabase = createServiceSupabaseClient();
-    const { data, error } = await supabase
-      .from("patients")
-      .update({ name, city, level, notes })
+    const updatePayload: PatientUpdate = { name, city, level, notes };
+    const { data, error } = await (supabase.from("patients") as any)
+      .update(updatePayload)
       .eq("id", id)
       .select()
       .maybeSingle();
@@ -76,9 +72,9 @@ export async function PUT(request: Request, context: RouteContext) {
       return NextResponse.json({ error: "Pacijent nije pronađen." }, { status: 404 });
     }
 
-    return NextResponse.json({ data: mapPatient(data) });
+    return NextResponse.json({ data: mapPatient(data as PatientRow) });
   } catch (error) {
-    console.error(`PUT /api/patients/${params.id} error`, error);
+    console.error(`PUT /api/patients/${id} error`, error);
     return NextResponse.json(
       { error: "Greška pri izmjeni pacijenta." },
       { status: 500 }
@@ -87,8 +83,8 @@ export async function PUT(request: Request, context: RouteContext) {
 }
 
 export async function DELETE(_request: Request, context: RouteContext) {
+  const { id } = await context.params;
   try {
-    const { id } = await context.params;
     const supabase = createServiceSupabaseClient();
     const { error } = await supabase.from("patients").delete().eq("id", id);
 
