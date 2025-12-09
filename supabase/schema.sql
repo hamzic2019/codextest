@@ -53,6 +53,32 @@ create unique index if not exists plan_assignments_worker_date_shift_uidx
   where worker_id is not null;
 create index if not exists plans_patient_idx on public.plans(patient_id);
 
+create table if not exists public.push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  endpoint text not null unique,
+  auth text not null,
+  p256dh text not null,
+  device_label text,
+  user_agent text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create or replace function public.set_push_subscriptions_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists push_subscriptions_set_updated_at on public.push_subscriptions;
+create trigger push_subscriptions_set_updated_at
+  before update on public.push_subscriptions
+  for each row execute function public.set_push_subscriptions_updated_at();
+
 drop trigger if exists enforce_day_after_night_trigger on public.plan_assignments;
 
 create or replace function public.enforce_day_after_night()
@@ -117,6 +143,7 @@ alter table public.patients enable row level security;
 alter table public.workers enable row level security;
 alter table public.plans enable row level security;
 alter table public.plan_assignments enable row level security;
+alter table public.push_subscriptions enable row level security;
 
 -- Relaxed policies so the UI can read/write with anon key; tighten later if needed.
 drop policy if exists "Public read patients" on public.patients;
@@ -127,6 +154,7 @@ drop policy if exists "Public read plans" on public.plans;
 drop policy if exists "Public upsert plans" on public.plans;
 drop policy if exists "Public read plan assignments" on public.plan_assignments;
 drop policy if exists "Public upsert plan assignments" on public.plan_assignments;
+drop policy if exists "Public insert push subscriptions" on public.push_subscriptions;
 
 create policy "Public read patients" on public.patients for select using (true);
 create policy "Public insert patients" on public.patients for insert with check (true);
@@ -136,3 +164,4 @@ create policy "Public read plans" on public.plans for select using (true);
 create policy "Public upsert plans" on public.plans for insert with check (true);
 create policy "Public read plan assignments" on public.plan_assignments for select using (true);
 create policy "Public upsert plan assignments" on public.plan_assignments for insert with check (true);
+create policy "Public insert push subscriptions" on public.push_subscriptions for insert with check (true);

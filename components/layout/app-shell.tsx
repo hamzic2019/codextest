@@ -8,6 +8,7 @@ import { BarChart3, CalendarClock, HeartPulse, Settings2, Sparkles, Users2 } fro
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
 import { LanguageProvider, useTranslations } from "../i18n/language-provider";
+import { PushTestButton } from "../pwa/push-test-button";
 
 const baseNavItems = [
   { labelKey: "nav.aiPlanner" as const, href: "/planner", icon: Sparkles },
@@ -108,6 +109,10 @@ function AppShellContent({ children }: { children: ReactNode }) {
           })}
         </nav>
 
+        <div className="relative mt-4">
+          <PushTestButton />
+        </div>
+
         {settingsNavItem && SettingsIcon && (
           <div className="relative mt-auto space-y-3 border-t border-white/5 pt-4">
             <Link
@@ -161,6 +166,9 @@ function AppShellContent({ children }: { children: ReactNode }) {
                   </Link>
                 );
               })}
+            </div>
+            <div className="lg:hidden">
+              <PushTestButton />
             </div>
             <main className="pb-12">{children}</main>
           </div>

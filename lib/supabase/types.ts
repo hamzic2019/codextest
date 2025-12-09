@@ -125,6 +125,38 @@ export type Database = {
           created_at?: string;
         };
       };
+      push_subscriptions: {
+        Row: {
+          id: string;
+          endpoint: string;
+          auth: string;
+          p256dh: string;
+          device_label: string | null;
+          user_agent: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          endpoint: string;
+          auth: string;
+          p256dh: string;
+          device_label?: string | null;
+          user_agent?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          endpoint?: string;
+          auth?: string;
+          p256dh?: string;
+          device_label?: string | null;
+          user_agent?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+      };
     };
   };
 };
