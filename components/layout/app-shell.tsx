@@ -1,6 +1,7 @@
 /* UI skeleton for primary app pages. */
 "use client";
 
+import dynamic from "next/dynamic";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useMemo } from "react";
@@ -8,7 +9,11 @@ import { BarChart3, CalendarClock, HeartPulse, Settings2, Sparkles, Users2 } fro
 import { cn } from "@/lib/utils";
 import type { ReactNode } from "react";
 import { LanguageProvider, useTranslations } from "../i18n/language-provider";
-import { PushTestButton } from "../pwa/push-test-button";
+
+const PushTestButton = dynamic(
+  () => import("../pwa/push-test-button").then((m) => m.PushTestButton),
+  { ssr: false, loading: () => null }
+);
 
 const baseNavItems = [
   { labelKey: "nav.aiPlanner" as const, href: "/planner", icon: Sparkles },
