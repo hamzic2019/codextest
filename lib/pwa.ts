@@ -1,10 +1,6 @@
 /* Browser-only helpers for PWA registration and push notification setup. */
 
-const DEFAULT_VAPID_PUBLIC_KEY =
-  "BKimYHQqAhSCGgoepSj63Qi6cXF9_eMHeOj9tP7e64dGkqx2S1bH0kmYUlgr9vrI1cy04Pny737RZ6r87vrLVFA";
-
-export const VAPID_PUBLIC_KEY =
-  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || DEFAULT_VAPID_PUBLIC_KEY;
+export const VAPID_PUBLIC_KEY = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
 
 export function isPwaSupported() {
   return typeof window !== "undefined" && "serviceWorker" in navigator;
