@@ -3,8 +3,12 @@ import type { Database } from "@/lib/supabase/types";
 import { NextResponse } from "next/server";
 import webpush, { WebPushError } from "web-push";
 
-const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
-const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY;
+const DEFAULT_VAPID_PUBLIC_KEY =
+  "BKimYHQqAhSCGgoepSj63Qi6cXF9_eMHeOj9tP7e64dGkqx2S1bH0kmYUlgr9vrI1cy04Pny737RZ6r87vrLVFA";
+const DEFAULT_VAPID_PRIVATE_KEY = "jCpLus9A-24ZTQp4KAeluGLmpNDC2k65iqNQ0vSvVG8";
+
+const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || DEFAULT_VAPID_PUBLIC_KEY;
+const vapidPrivateKey = process.env.VAPID_PRIVATE_KEY || DEFAULT_VAPID_PRIVATE_KEY;
 const vapidContact = process.env.VAPID_CONTACT_EMAIL ?? "mailto:hello@pflegeki.app";
 
 type Payload = {

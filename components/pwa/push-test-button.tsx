@@ -1,6 +1,6 @@
 "use client";
 
-import { ensurePushSubscription, registerServiceWorker, saveSubscription } from "@/lib/pwa";
+import { VAPID_PUBLIC_KEY, ensurePushSubscription, registerServiceWorker, saveSubscription } from "@/lib/pwa";
 import { Bell } from "lucide-react";
 import { useState } from "react";
 
@@ -22,15 +22,10 @@ export function PushTestButton() {
         throw new Error("Pregledač ne podržava service worker ili je zabranjen.");
       }
 
-      const subscription = await ensurePushSubscription(
-        registration,
-        process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY
-      );
+      const subscription = await ensurePushSubscription(registration, VAPID_PUBLIC_KEY);
 
       if (!subscription) {
-        throw new Error(
-          "Push nije omogućen. Prihvatite permission dijalog (Allow notifications)."
-        );
+        throw new Error("Push subscription nije kreiran.");
       }
 
       const deviceLabel = navigator.userAgent.slice(0, 150);

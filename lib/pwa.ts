@@ -1,6 +1,10 @@
 /* Browser-only helpers for PWA registration and push notification setup. */
 
-const vapidPublicKey = process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY;
+const DEFAULT_VAPID_PUBLIC_KEY =
+  "BKimYHQqAhSCGgoepSj63Qi6cXF9_eMHeOj9tP7e64dGkqx2S1bH0kmYUlgr9vrI1cy04Pny737RZ6r87vrLVFA";
+
+export const VAPID_PUBLIC_KEY =
+  process.env.NEXT_PUBLIC_VAPID_PUBLIC_KEY || DEFAULT_VAPID_PUBLIC_KEY;
 
 export function isPwaSupported() {
   return typeof window !== "undefined" && "serviceWorker" in navigator;
@@ -32,18 +36,24 @@ export async function requestNotificationPermission(): Promise<NotificationPermi
 
 export async function ensurePushSubscription(
   registration: ServiceWorkerRegistration,
-  publicKey = vapidPublicKey
+  publicKey = VAPID_PUBLIC_KEY
 ) {
   if (typeof window === "undefined") return null;
-  if (!publicKey) return null;
-  if (!("pushManager" in registration)) return null;
+  if (!publicKey) {
+    throw new Error("VAPID public key nije postavljen (NEXT_PUBLIC_VAPID_PUBLIC_KEY).");
+  }
+  if (!("pushManager" in registration)) {
+    throw new Error("Push API nije podržan u ovom pregledaču.");
+  }
 
   const permission =
     Notification.permission === "granted"
       ? "granted"
       : await requestNotificationPermission();
 
-  if (permission !== "granted") return null;
+  if (permission !== "granted") {
+    throw new Error("Push nije omogućen. Prihvatite permission dijalog (Allow notifications).");
+  }
 
   const existing = await registration.pushManager.getSubscription();
   if (existing) return existing;
