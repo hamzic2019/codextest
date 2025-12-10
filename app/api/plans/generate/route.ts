@@ -401,12 +401,14 @@ function buildSchedule(
     schedule.set(day, entry);
   });
 
+  const remainingForShift = (worker: WorkerState, shift: "day" | "night") =>
+    shift === "day"
+      ? worker.targetDay - worker.assignedDay
+      : worker.targetNight - worker.assignedNight;
+
   const scoreCandidateSimple = (worker: WorkerState, shift: "day" | "night") => {
     const totalRemaining = Math.max(worker.targetDays - worker.assigned, 0);
-    const shiftRemaining =
-      shift === "day"
-        ? Math.max(worker.targetDay - worker.assignedDay, 0)
-        : Math.max(worker.targetNight - worker.assignedNight, 0);
+    const shiftRemaining = Math.max(remainingForShift(worker, shift), 0);
     const fairness = 1 / (1 + worker.assigned);
     const priorityBoost = worker.priority ? 2 : 1;
     return shiftRemaining * 5 + totalRemaining * 2 + fairness * 3 * priorityBoost;
@@ -444,7 +446,8 @@ function buildSchedule(
     day: number,
     shift: ShiftType,
     entry: { day?: string | null; night?: string | null },
-    busyEntry: { day: Set<string>; night: Set<string> }
+    busyEntry: { day: Set<string>; night: Set<string> },
+    respectQuota: boolean
   ) => {
     if (!selectedIds.has(worker.id)) return false;
     if (shift === "day" && !worker.allowDay) return false;
@@ -455,6 +458,8 @@ function buildSchedule(
       if (busyNext?.day.has(worker.id)) return false;
     }
     if (worker.assigned >= worker.hardCap) return false;
+    const shiftRemaining = remainingForShift(worker, shift);
+    if (respectQuota && shiftRemaining <= 0) return false;
     const rest = evaluateRestRule(historyById.get(worker.id), worker.id, day, shift, entry, busyEntry);
     if (!rest.allowed) return false;
     return true;
@@ -481,6 +486,14 @@ function buildSchedule(
       const workerId = entry[shift];
       if (!workerId) return;
       const worker = ensureStateForWorker(workerId);
+      const isLockedShift = Boolean(lockedMap.get(day)?.[shift]);
+      const respectQuota = !isLockedShift;
+      const shiftRemaining = remainingForShift(worker, shift);
+      // Ako smjena nije ručno zaključana, ne prelazi traženi omjer (npr. 100% noćne).
+      if (respectQuota && shiftRemaining <= 0) {
+        entry[shift] = null;
+        return;
+      }
       if (worker.assigned >= worker.hardCap) {
         entry[shift] = null;
         return;
@@ -499,29 +512,25 @@ function buildSchedule(
       if (entry[shift]) return;
       if (lockedMap.get(day)?.[shift]) return; // zaključano, ali prazno => ostaje prazno
 
-      const candidates = normalizedPrefs
-        .map((pref) => ensureStateForWorker(pref.workerId))
-        .filter((worker) => canWork(worker, day, shift, entry, busyEntry));
+      // Prvo probaj ispoštovati kvote dan/noć, tek onda popuni overflow ako nema kandidata.
+      const buildCandidates = (respectQuota: boolean) =>
+        normalizedPrefs
+          .map((pref) => ensureStateForWorker(pref.workerId))
+          .filter((worker) => canWork(worker, day, shift, entry, busyEntry, respectQuota));
+
+      const candidates = buildCandidates(true);
+      const relaxedCandidates = candidates.length > 0 ? candidates : buildCandidates(false);
 
       const pick = () => {
-        if (candidates.length === 0) return null;
-        const best = candidates
+        if (relaxedCandidates.length === 0) return null;
+        const best = relaxedCandidates
           .map((worker) => ({ worker, score: scoreCandidateSimple(worker, shift) }))
           .sort((a, b) => b.score - a.score)[0];
         if (!best) return null;
         return best.worker;
       };
 
-      let chosen = pick();
-
-      if (!chosen) {
-        const anyValid = normalizedPrefs
-          .map((pref) => ensureStateForWorker(pref.workerId))
-          .filter((worker) => canWork(worker, day, shift, entry, busyEntry));
-        if (anyValid.length > 0) {
-          chosen = anyValid.sort((a, b) => a.assigned - b.assigned)[0];
-        }
-      }
+      const chosen = pick();
 
       if (chosen) {
         const nextState = applyAssignment(chosen, day, shift);
@@ -590,7 +599,7 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "patientId, month i year su obavezni." }, { status: 400 });
     }
 
-    const supabase = createServiceSupabaseClient() as any;
+    const supabase = createServiceSupabaseClient();
     const { data: patient, error: patientError } = await supabase
       .from("patients")
       .select("*")
@@ -704,7 +713,7 @@ Vrati strogi JSON sa poljem "plan": [{ "date": "YYYY-MM-DD", "dayWorkerId": "<id
         notes: patient.notes,
       },
       prompt,
-      workers: workerRows.map((worker: any) => ({
+      workers: workerRows.map((worker) => ({
         id: worker.id,
         name: worker.name,
         role: worker.role ?? "",
