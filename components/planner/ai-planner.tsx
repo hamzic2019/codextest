@@ -4,6 +4,8 @@ import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import {
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Clock,
   FileDown,
   Moon,
@@ -774,8 +776,22 @@ export function PlannerWizard() {
   );
   const availablePlanYears = useMemo(() => {
     const currentYear = new Date().getFullYear();
-    return Array.from({ length: 4 }, (_, index) => currentYear + index);
-  }, []);
+    const minYear = currentYear - 1;
+    const maxYear = currentYear + 4;
+    const years = Array.from({ length: maxYear - minYear + 1 }, (_, index) => minYear + index);
+    if (!years.includes(planYear)) {
+      years.push(planYear);
+    }
+    return years.sort((a, b) => a - b);
+  }, [planYear]);
+  const handleStepMonth = useCallback(
+    (direction: -1 | 1) => {
+      const nextDate = new Date(planYear, planMonth + direction, 1);
+      setPlanMonth(nextDate.getMonth());
+      setPlanYear(nextDate.getFullYear());
+    },
+    [planMonth, planYear]
+  );
   const selectedPlanLabel = useMemo(
     () => formatMonthLabel(language, new Date(planYear, planMonth, 1)),
     [language, planMonth, planYear]
@@ -1461,79 +1477,105 @@ export function PlannerWizard() {
         />
       </div>
 
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:gap-4">
-        <div className="grid flex-1 gap-3 sm:grid-cols-2">
-          <label className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
-            <span className="block text-[11px]">{t("planner.generate.monthLabel")}</span>
-            <div className="relative mt-1">
-              <select
-                aria-label={t("planner.generate.monthLabel")}
-                className="appearance-none w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 pr-10 text-sm font-medium text-slate-700 shadow-sm shadow-slate-100 transition hover:border-slate-300 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
-                value={planMonth}
-                onChange={(event) => setPlanMonth(Number(event.target.value))}
-              >
-                {plannerMonthNames.map((label, index) => (
-                  <option key={label} value={index}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown
-                className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-                aria-hidden
-              />
+      <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="flex flex-1 flex-col gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+              <div className="flex flex-1 items-center gap-2 rounded-xl border border-slate-100 bg-slate-50/70 p-3 shadow-inner sm:p-3.5">
+                <button
+                  type="button"
+                  aria-label={t("planner.generate.prevMonth")}
+                  onClick={() => handleStepMonth(-1)}
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                >
+                  <ChevronLeft className="h-4 w-4" aria-hidden />
+                </button>
+                <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                  <label className="sr-only" htmlFor="planner-month-select">
+                    {t("planner.generate.monthLabel")}
+                  </label>
+                  <div className="relative flex-1 min-w-[160px] sm:min-w-[180px]">
+                    <select
+                      id="planner-month-select"
+                      aria-label={t("planner.generate.monthLabel")}
+                      className="h-11 w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 pr-10 text-sm font-semibold text-slate-700 shadow-sm shadow-slate-100 transition hover:border-slate-300 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                      value={planMonth}
+                      onChange={(event) => setPlanMonth(Number(event.target.value))}
+                    >
+                      {plannerMonthNames.map((label, index) => (
+                        <option key={label} value={index}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                      aria-hidden
+                    />
+                  </div>
+                  <label className="sr-only" htmlFor="planner-year-select">
+                    {t("planner.generate.yearLabel")}
+                  </label>
+                  <div className="relative w-full sm:w-[140px]">
+                    <select
+                      id="planner-year-select"
+                      aria-label={t("planner.generate.yearLabel")}
+                      className="h-11 w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 pr-10 text-sm font-semibold text-slate-700 shadow-sm shadow-slate-100 transition hover:border-slate-300 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                      value={planYear}
+                      onChange={(event) => setPlanYear(Number(event.target.value))}
+                    >
+                      {availablePlanYears.map((year) => (
+                        <option key={year} value={year}>
+                          {year}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown
+                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                      aria-hidden
+                    />
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  aria-label={t("planner.generate.nextMonth")}
+                  onClick={() => handleStepMonth(1)}
+                  className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                >
+                  <ChevronRight className="h-4 w-4" aria-hidden />
+                </button>
+              </div>
             </div>
-          </label>
-          <label className="text-[11px] uppercase tracking-[0.2em] text-slate-500">
-            <span className="block text-[11px]">{t("planner.generate.yearLabel")}</span>
-            <div className="relative mt-1">
-              <select
-                aria-label={t("planner.generate.yearLabel")}
-                className="appearance-none w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 pr-10 text-sm font-medium text-slate-700 shadow-sm shadow-slate-100 transition hover:border-slate-300 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
-                value={planYear}
-                onChange={(event) => setPlanYear(Number(event.target.value))}
-              >
-                {availablePlanYears.map((year) => (
-                  <option key={year} value={year}>
-                    {year}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown
-                className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-                aria-hidden
-              />
-            </div>
-          </label>
-        </div>
+          </div>
 
-        <div className="flex flex-col gap-2 sm:w-auto sm:flex-row sm:items-center sm:justify-end sm:gap-3 sm:pl-2">
-          <button
-            type="button"
-          onClick={handleGenerate}
-          disabled={disableGenerate}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:-translate-y-[1px] disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-        >
-          <Sparkles className="h-4 w-4" />
-          {isGenerating ? t("planner.generating") : t("planner.generate")}
-        </button>
-        <button
-          type="button"
-          onClick={handleExport}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 sm:w-auto"
-        >
-          <FileDown className="h-4 w-4" />
-          {t("planner.export")}
-        </button>
-          <button
-            type="button"
-            onClick={handleSave}
-            disabled={disableSave}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-lg transition hover:-translate-y-[1px] hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-          >
-            <Save className="h-4 w-4" />
-            {isSaving ? t("planner.saving") : t("planner.save")}
-          </button>
+          <div className="flex w-full flex-wrap items-center gap-2 pt-2 sm:pt-0 lg:w-auto">
+            <button
+              type="button"
+              onClick={handleGenerate}
+              disabled={disableGenerate}
+              className="inline-flex w-full min-w-[160px] items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(15,23,42,0.2)] transition hover:-translate-y-[1px] hover:shadow-[0_16px_40px_rgba(15,23,42,0.24)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-100 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+            >
+              <Sparkles className="h-4 w-4" />
+              {isGenerating ? t("planner.generating") : t("planner.generate")}
+            </button>
+            <button
+              type="button"
+              onClick={handleExport}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-100 sm:w-auto"
+            >
+              <FileDown className="h-4 w-4" />
+              {t("planner.export")}
+            </button>
+            <button
+              type="button"
+              onClick={handleSave}
+              disabled={disableSave}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(16,185,129,0.4)] transition hover:-translate-y-[1px] hover:bg-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-100 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+            >
+              <Save className="h-4 w-4" />
+              {isSaving ? t("planner.saving") : t("planner.save")}
+            </button>
+          </div>
         </div>
       </div>
 
