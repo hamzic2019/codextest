@@ -187,6 +187,12 @@ const translations = {
   "planner.saveSuccess": "Plan wurde in Supabase gespeichert.",
   "planner.saveError": "Plan konnte nicht gespeichert werden.",
   "planner.generating": "Generiere...",
+  "planner.generating.overlayTitle": "KI-Plan wird gebaut...",
+  "planner.generating.overlayBody":
+    "Wir balancieren Tag- und Nachtdienste, lösen Überschneidungen und setzen den Dienstplan zusammen - gleich ist es fertig.",
+  "planner.generating.actionBarNarrative":
+    "Die KI analysiert deine Vorgaben, balanciert Tag/Nacht und komponiert den Dienstplan wie einen kurzen Film.",
+  "planner.generating.progressLabel": "Verarbeitung: {percent}%",
   "planner.saving": "Speichere...",
   "planner.preview.assigned": "{count} Dienste zugewiesen",
   "planner.daysClamped": "Wunsch-Tage auf {max} begrenzt.",

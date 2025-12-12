@@ -187,6 +187,12 @@ const translations = {
   "planner.saveSuccess": "Plan saved to Supabase.",
   "planner.saveError": "Could not save the plan.",
   "planner.generating": "Generating...",
+  "planner.generating.overlayTitle": "Crafting your AI proposal...",
+  "planner.generating.overlayBody":
+    "Balancing day and night shifts, resolving overlaps and assembling the schedule - this takes only a few seconds.",
+  "planner.generating.actionBarNarrative":
+    "The AI brain digests your inputs, balances day and night, and weaves the rota like a cinematic tech demo.",
+  "planner.generating.progressLabel": "Processing: {percent}%",
   "planner.saving": "Saving...",
   "planner.preview.assigned": "{count} shifts assigned",
   "planner.daysClamped": "Requested days capped to {max}.",

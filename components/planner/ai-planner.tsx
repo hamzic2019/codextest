@@ -301,27 +301,10 @@ function WorkerSearchSelect({
                 })}
               </div>
             )}
-            <style jsx>{`
-              .scroll-custom {
-                scrollbar-width: thin;
-                scrollbar-color: rgba(15, 23, 42, 0.2) transparent;
-              }
-              .scroll-custom::-webkit-scrollbar {
-                width: 6px;
-              }
-              .scroll-custom::-webkit-scrollbar-track {
-                background: transparent;
-                margin: 12px 0;
-              }
-              .scroll-custom::-webkit-scrollbar-thumb {
-                background: rgba(15, 23, 42, 0.2);
-                border-radius: 999px;
-              }
-            `}</style>
           </div>,
-      document.body
-    )}
-  </div>
+          document.body
+        )}
+    </div>
   );
 }
 
@@ -805,6 +788,7 @@ export function PlannerWizard() {
   const [shiftLocks, setShiftLocks] = useState<ShiftLockState>({});
   const [generatedSummary, setGeneratedSummary] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [generationProgress, setGenerationProgress] = useState(0);
   const [isSaving, setIsSaving] = useState(false);
   const [statusMessage, setStatusMessage] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -998,6 +982,20 @@ export function PlannerWizard() {
     loadBusy();
     return () => controller.abort();
   }, [planMonth, planYear, selectedPatient]);
+
+  useEffect(() => {
+    if (!isGenerating) {
+      setGenerationProgress(0);
+      return;
+    }
+
+    setGenerationProgress(6);
+    const interval = setInterval(() => {
+      setGenerationProgress((prev) => Math.min(99, prev + Math.random() * 2 + 0.4));
+    }, 520);
+
+    return () => clearInterval(interval);
+  }, [isGenerating]);
 
   const availableWorkersByShift = useMemo(() => {
     const build = (shift: ShiftType) => {
@@ -1204,7 +1202,7 @@ export function PlannerWizard() {
           pref: worker,
           scaled: Math.max(0, Math.floor(worker.days * factor)),
         }));
-        let scaledTotal = meta.reduce((sum, item) => sum + item.scaled, 0);
+        const scaledTotal = meta.reduce((sum, item) => sum + item.scaled, 0);
         let remaining = totalSlots - scaledTotal;
         const byNeed = [...meta].sort(
           (a, b) => b.pref.days - a.pref.days || a.pref.workerId.localeCompare(b.pref.workerId)
@@ -1385,197 +1383,221 @@ export function PlannerWizard() {
   const disableSave =
     isSaving || isGenerating || isLoadingPlan || !selectedPatient || !hasAnyAssignment;
   const todayRow = previewRows.find((row) => row.isToday);
+  const progressPercent = Math.min(99, Math.max(0, Math.round(generationProgress)));
 
   return (
-    <Card className="space-y-4">
-      <div className="flex flex-wrap items-center gap-3">
-        <h2 className="text-xl font-semibold text-slate-900">{t("planner.title")}</h2>
-        {hasUnsavedChanges ? (
-          <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-            {t("planner.unsavedChanges")}
-          </span>
-        ) : null}
-        {statusMessage ? (
-          <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-            {statusMessage}
-          </span>
-        ) : null}
-        {errorMessage ? (
-          <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
-            {errorMessage}
-          </span>
-        ) : null}
-        {sanitizationNotice ? (
-          <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
-            {sanitizationNotice}
-          </span>
-        ) : null}
-      </div>
-
-      <div className="space-y-3">
-        <PatientSelector
-          value={selectedPatient}
-          onChange={(patientId) => setSelectedPatient(patientId)}
-          data={patients}
-          isLoading={isLoadingData}
-        />
-      </div>
-
-      <div className="space-y-3">
+    <Card className="relative space-y-4 overflow-hidden">
+      <div className="space-y-4">
         <div className="flex flex-wrap items-center gap-3">
+          <h2 className="text-xl font-semibold text-slate-900">{t("planner.title")}</h2>
+          {hasUnsavedChanges ? (
+            <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+              {t("planner.unsavedChanges")}
+            </span>
+          ) : null}
+          {statusMessage ? (
+            <span className="rounded-full bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+              {statusMessage}
+            </span>
+          ) : null}
+          {errorMessage ? (
+            <span className="rounded-full bg-red-50 px-3 py-1 text-xs font-semibold text-red-700">
+              {errorMessage}
+            </span>
+          ) : null}
+          {sanitizationNotice ? (
+            <span className="rounded-full bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-700">
+              {sanitizationNotice}
+            </span>
+          ) : null}
+        </div>
+
+        <div className="space-y-3">
+          <PatientSelector
+            value={selectedPatient}
+            onChange={(patientId) => setSelectedPatient(patientId)}
+            data={patients}
+            isLoading={isLoadingData}
+          />
+        </div>
+
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
+              {t("planner.workersLabel")}
+            </p>
+          </div>
+          <WorkerSearchSelect
+            workers={workers}
+            selectedIds={selectedIds}
+            onSelect={upsertWorker}
+          />
+
+          {isLoadingData ? (
+            <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              {t("planner.loading")}
+            </div>
+          ) : null}
+
+          {workers.length === 0 && !isLoadingData ? (
+            <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              {t("planner.noWorkers")}
+            </div>
+          ) : null}
+
+          <div className="grid gap-3 lg:grid-cols-2">
+            {selectedWorkers.map((item) => {
+              const worker = workerById.get(item.workerId);
+              if (!worker) return null;
+              return (
+                <WorkerCard
+                  key={item.workerId}
+                  worker={worker}
+                  preference={item}
+                  t={t}
+                  statusLabels={statusLabels}
+                  onUpdate={updateWorker}
+                  onRemove={removeWorker}
+                />
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="space-y-2">
           <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-            {t("planner.workersLabel")}
+            {t("planner.promptLabel")}
           </p>
+          <textarea
+            placeholder={t("planner.promptPlaceholder")}
+            className="w-full resize-none rounded-2xl border border-border/70 bg-white px-3 py-3 text-sm text-slate-800 outline-none placeholder:text-slate-400"
+            rows={4}
+            value={promptText}
+            onChange={(event) => setPromptText(event.target.value)}
+          />
         </div>
-        <WorkerSearchSelect
-          workers={workers}
-          selectedIds={selectedIds}
-          onSelect={upsertWorker}
-        />
 
-        {isLoadingData ? (
-          <div className="rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            {t("planner.loading")}
-          </div>
-        ) : null}
-
-        {workers.length === 0 && !isLoadingData ? (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            {t("planner.noWorkers")}
-          </div>
-        ) : null}
-
-        <div className="grid gap-3 lg:grid-cols-2">
-          {selectedWorkers.map((item) => {
-            const worker = workerById.get(item.workerId);
-            if (!worker) return null;
-            return (
-              <WorkerCard
-                key={item.workerId}
-                worker={worker}
-                preference={item}
-                t={t}
-                statusLabels={statusLabels}
-                onUpdate={updateWorker}
-                onRemove={removeWorker}
-              />
-            );
-          })}
-        </div>
-      </div>
-
-      <div className="space-y-2">
-        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">
-          {t("planner.promptLabel")}
-        </p>
-        <textarea
-          placeholder={t("planner.promptPlaceholder")}
-          className="w-full resize-none rounded-2xl border border-border/70 bg-white px-3 py-3 text-sm text-slate-800 outline-none placeholder:text-slate-400"
-          rows={4}
-          value={promptText}
-          onChange={(event) => setPromptText(event.target.value)}
-        />
-      </div>
-
-      <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
-          <div className="flex flex-1 flex-col gap-2">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-              <div className="flex flex-1 items-center gap-2 rounded-xl border border-slate-100 bg-slate-50/70 p-3 shadow-inner sm:p-3.5">
-                <button
-                  type="button"
-                  aria-label={t("planner.generate.prevMonth")}
-                  onClick={() => handleStepMonth(-1)}
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-100"
-                >
-                  <ChevronLeft className="h-4 w-4" aria-hidden />
-                </button>
-                <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-                  <label className="sr-only" htmlFor="planner-month-select">
-                    {t("planner.generate.monthLabel")}
-                  </label>
-                  <div className="relative flex-1 min-w-[160px] sm:min-w-[180px]">
-                    <select
-                      id="planner-month-select"
-                      aria-label={t("planner.generate.monthLabel")}
-                      className="h-11 w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 pr-10 text-sm font-semibold text-slate-700 shadow-sm shadow-slate-100 transition hover:border-slate-300 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
-                      value={planMonth}
-                      onChange={(event) => setPlanMonth(Number(event.target.value))}
-                    >
-                      {plannerMonthNames.map((label, index) => (
-                        <option key={label} value={index}>
-                          {label}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown
-                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-                      aria-hidden
-                    />
-                  </div>
-                  <label className="sr-only" htmlFor="planner-year-select">
-                    {t("planner.generate.yearLabel")}
-                  </label>
-                  <div className="relative w-full sm:w-[140px]">
-                    <select
-                      id="planner-year-select"
-                      aria-label={t("planner.generate.yearLabel")}
-                      className="h-11 w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 pr-10 text-sm font-semibold text-slate-700 shadow-sm shadow-slate-100 transition hover:border-slate-300 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
-                      value={planYear}
-                      onChange={(event) => setPlanYear(Number(event.target.value))}
-                    >
-                      {availablePlanYears.map((year) => (
-                        <option key={year} value={year}>
-                          {year}
-                        </option>
-                      ))}
-                    </select>
-                    <ChevronDown
-                      className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
-                      aria-hidden
-                    />
-                  </div>
+        <div className="rounded-2xl border border-slate-200 bg-white/90 p-4 shadow-[0_18px_50px_rgba(15,23,42,0.08)] relative overflow-hidden">
+          <div
+            className={`flex flex-wrap items-center justify-between gap-3 transition duration-300 ${
+              isGenerating ? "opacity-0 pointer-events-none" : "opacity-100"
+            }`}
+            aria-hidden={isGenerating}
+          >
+            <div className="flex min-w-[280px] flex-1 items-center gap-2 rounded-xl border border-slate-100 bg-slate-50/70 p-3 shadow-inner sm:p-3.5">
+              <button
+                type="button"
+                aria-label={t("planner.generate.prevMonth")}
+                onClick={() => handleStepMonth(-1)}
+                className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-100"
+              >
+                <ChevronLeft className="h-4 w-4" aria-hidden />
+              </button>
+              <div className="flex flex-1 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+                <label className="sr-only" htmlFor="planner-month-select">
+                  {t("planner.generate.monthLabel")}
+                </label>
+                <div className="relative flex-1 min-w-[160px] sm:min-w-[180px]">
+                  <select
+                    id="planner-month-select"
+                    aria-label={t("planner.generate.monthLabel")}
+                    className="h-11 w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 pr-10 text-sm font-semibold text-slate-700 shadow-sm shadow-slate-100 transition hover:border-slate-300 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                    value={planMonth}
+                    onChange={(event) => setPlanMonth(Number(event.target.value))}
+                  >
+                    {plannerMonthNames.map((label, index) => (
+                      <option key={label} value={index}>
+                        {label}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                    aria-hidden
+                  />
                 </div>
-                <button
-                  type="button"
-                  aria-label={t("planner.generate.nextMonth")}
-                  onClick={() => handleStepMonth(1)}
-                  className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-100"
-                >
-                  <ChevronRight className="h-4 w-4" aria-hidden />
-                </button>
+                <label className="sr-only" htmlFor="planner-year-select">
+                  {t("planner.generate.yearLabel")}
+                </label>
+                <div className="relative w-full sm:w-[140px]">
+                  <select
+                    id="planner-year-select"
+                    aria-label={t("planner.generate.yearLabel")}
+                    className="h-11 w-full appearance-none rounded-xl border border-slate-200 bg-white px-3 pr-10 text-sm font-semibold text-slate-700 shadow-sm shadow-slate-100 transition hover:border-slate-300 focus:border-sky-400 focus:outline-none focus:ring-2 focus:ring-sky-100"
+                    value={planYear}
+                    onChange={(event) => setPlanYear(Number(event.target.value))}
+                  >
+                    {availablePlanYears.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
+                  <ChevronDown
+                    className="pointer-events-none absolute right-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400"
+                    aria-hidden
+                  />
+                </div>
               </div>
+              <button
+                type="button"
+                aria-label={t("planner.generate.nextMonth")}
+                onClick={() => handleStepMonth(1)}
+                className="inline-flex h-11 w-11 items-center justify-center rounded-lg border border-slate-200 bg-white text-slate-700 shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-100"
+              >
+                <ChevronRight className="h-4 w-4" aria-hidden />
+              </button>
+            </div>
+
+            <div className="flex flex-wrap items-center justify-end gap-3">
+              <button
+                type="button"
+                onClick={handleGenerate}
+                disabled={disableGenerate}
+                className="group inline-flex w-full min-w-[170px] items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-800 to-slate-900 px-5 py-3 text-sm font-semibold text-white shadow-[0_14px_32px_rgba(15,23,42,0.28)] transition hover:-translate-y-[2px] hover:shadow-[0_18px_46px_rgba(15,23,42,0.32)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-200 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+              >
+                <Sparkles className="h-4 w-4 transition duration-150 group-hover:scale-110" />
+                {isGenerating ? t("planner.generating") : t("planner.generate")}
+              </button>
+              <button
+                type="button"
+                onClick={handleExport}
+                className="group inline-flex w-full items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-[0_10px_30px_rgba(15,23,42,0.08)] transition hover:-translate-y-[2px] hover:border-slate-300 hover:bg-slate-50 hover:shadow-[0_12px_38px_rgba(15,23,42,0.12)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-100 sm:w-auto"
+              >
+                <FileDown className="h-4 w-4 transition duration-150 group-hover:scale-110 group-hover:text-slate-900" />
+                {t("planner.export")}
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={disableSave}
+                className="group inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-emerald-500 to-emerald-600 px-5 py-3 text-sm font-semibold text-white shadow-[0_14px_32px_rgba(16,185,129,0.35)] transition hover:-translate-y-[2px] hover:shadow-[0_18px_48px_rgba(16,185,129,0.42)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-100 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+              >
+                <Save className="h-4 w-4 transition duration-150 group-hover:scale-110" />
+                  {isSaving ? t("planner.saving") : t("planner.save")}
+              </button>
             </div>
           </div>
-
-          <div className="flex w-full flex-wrap items-center gap-2 pt-2 sm:pt-0 lg:w-auto">
-            <button
-              type="button"
-              onClick={handleGenerate}
-              disabled={disableGenerate}
-              className="inline-flex w-full min-w-[160px] items-center justify-center gap-2 rounded-xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(15,23,42,0.2)] transition hover:-translate-y-[1px] hover:shadow-[0_16px_40px_rgba(15,23,42,0.24)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-100 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-            >
-              <Sparkles className="h-4 w-4" />
-              {isGenerating ? t("planner.generating") : t("planner.generate")}
-            </button>
-            <button
-              type="button"
-              onClick={handleExport}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 shadow-sm transition hover:-translate-y-[1px] hover:border-slate-300 hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-sky-100 sm:w-auto"
-            >
-              <FileDown className="h-4 w-4" />
-              {t("planner.export")}
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              disabled={disableSave}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-500 px-4 py-3 text-sm font-semibold text-white shadow-[0_12px_30px_rgba(16,185,129,0.4)] transition hover:-translate-y-[1px] hover:bg-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-100 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-            >
-              <Save className="h-4 w-4" />
-              {isSaving ? t("planner.saving") : t("planner.save")}
-            </button>
-          </div>
+          {isGenerating ? (
+            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-2xl bg-slate-900/90">
+              <div className="flex w-full flex-col items-center gap-4 rounded-2xl bg-slate-900/90 px-6 py-4">
+                <div className="flex w-full items-center justify-between text-sm font-semibold tracking-[0.3em] text-white">
+                  <span>Planiranje</span>
+                  <div className="h-2 w-2 rounded-full bg-cyan-400 animate-pulse" />
+                </div>
+                <div className="relative h-2 w-full overflow-hidden rounded-full bg-slate-700">
+                  <div
+                    className="absolute inset-0 h-full rounded-full bg-gradient-to-r from-cyan-400 via-blue-500 to-indigo-500 animate-[scan_2s_linear_infinite]"
+                    style={{ width: `${progressPercent}%` }}
+                  />
+                  <div className="absolute inset-y-0 left-0 h-full w-full bg-gradient-to-r from-transparent via-white/40 to-transparent opacity-40 animate-[glow_4s_ease-in-out_infinite]" />
+                </div>
+                <div className="w-full text-xs font-semibold tracking-[0.3em] text-white/70">
+                  {progressPercent}% kompletirano
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       </div>
 

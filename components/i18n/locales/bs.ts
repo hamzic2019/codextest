@@ -187,6 +187,12 @@ const translations = {
   "planner.saveSuccess": "Plan je spašen u Supabase.",
   "planner.saveError": "Greška pri snimanju plana.",
   "planner.generating": "Generišem...",
+  "planner.generating.overlayTitle": "Pravim AI prijedlog...",
+  "planner.generating.overlayBody":
+    "Kompjuterski slagalica za smjene: balansiramo dane i noći, čistimo preklapanja i pripremamo finalni raspored.",
+  "planner.generating.actionBarNarrative":
+    "AI mozak uči tvoje želje, balansira dan i noć te slaže smjene kao mini film pun svjetluca.",
+  "planner.generating.progressLabel": "Obrada: {percent}%",
   "planner.saving": "Spremam...",
   "planner.preview.assigned": "{count} smjena dodijeljeno",
   "planner.daysClamped": "Broj dana je skraćen na max {max} dana.",
